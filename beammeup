@@ -7,7 +7,7 @@ DEFAULT_SOCKS_PORT=1080
 DEFAULT_HTTP_PORT=18181
 DEFAULT_BASE_URL="https://beammeup.pw"
 DEFAULT_SHIPS_DIR="${HOME:-.}/.beammeup/ships"
-BEAMMEUP_VERSION="1.4.2"
+BEAMMEUP_VERSION="1.4.3"
 USE_TUI=0
 
 info() {
@@ -15,6 +15,10 @@ info() {
 }
 
 die() {
+  if [[ "${USE_TUI:-0}" -eq 1 ]] && command -v gum >/dev/null 2>&1; then
+    gum style --border rounded --padding "1 2" --margin "1 0" --border-foreground 196 --foreground 196 "ERROR\n\n$*"
+    exit 1
+  fi
   printf '[beammeup] ERROR: %s\n' "$*" >&2
   exit 1
 }
@@ -23,6 +27,10 @@ phase() {
   local index="$1"
   local total="$2"
   local label="$3"
+  if [[ "${USE_TUI:-0}" -eq 1 ]] && command -v gum >/dev/null 2>&1; then
+    gum style --border double --padding "0 2" --margin "1 0" --foreground 45 "[${index}/${total}] ${label}"
+    return
+  fi
   printf '\n[%s/%s] %s\n\n' "$index" "$total" "$label"
 }
 
@@ -91,6 +99,15 @@ tui_msg() {
   gum style --padding "0 1" "$rendered"
   printf '\npress enter to continue > '
   IFS= read -r _
+}
+
+tui_card() {
+  local title="$1"
+  local message="$2"
+  local rendered
+  rendered="$(printf '%b' "$message")"
+  gum style --border rounded --padding "1 2" --margin "1 0" --foreground 212 "${title}"
+  printf '%s\n' "$rendered" | gum style --padding "0 1"
 }
 
 print_help() {
@@ -559,9 +576,14 @@ interactive_ship_wizard() {
         selected_ship="$(choose_existing_ship)" || continue
         SHIP_NAME="$selected_ship"
         apply_ship_profile "$SHIP_NAME"
+        tui_card "selected ship: ${SHIP_NAME}" "Host: ${HOST}\nSSH: ${SSH_USER}@${HOST}:${SSH_PORT}\nProtocol: ${PROTOCOL:-http}\nProxy port: ${PROXY_PORT:-auto}"
         if prompt_yes_no_default "Edit this ship before launch?" "n"; then
           collect_ship_fields
           persist_ship_profile "$SHIP_NAME"
+          tui_card "ship updated: ${SHIP_NAME}" "Host: ${HOST}\nSSH: ${SSH_USER}@${HOST}:${SSH_PORT}\nProtocol: ${PROTOCOL}\nProxy port: ${PROXY_PORT}"
+        fi
+        if ! prompt_yes_no_default "Launch this ship now?" "Y"; then
+          continue
         fi
         return
         ;;
@@ -590,6 +612,7 @@ interactive_ship_wizard() {
         NO_FIREWALL_CHANGE=0
         collect_ship_fields
         persist_ship_profile "$SHIP_NAME"
+        tui_card "ship ready: ${SHIP_NAME}" "Host: ${HOST}\nSSH: ${SSH_USER}@${HOST}:${SSH_PORT}\nProtocol: ${PROTOCOL}\nProxy port: ${PROXY_PORT}"
         return
         ;;
       abandon)
@@ -739,6 +762,27 @@ print_inventory_summary() {
   http_port="$(extract_value "BM_HTTP_PORT" "$output" || true)"
   http_user="$(extract_value "BM_HTTP_USER" "$output" || true)"
   http_legacy="$(extract_value "BM_HTTP_LEGACY" "$output" || echo 0)"
+
+  if [[ "$USE_TUI" -eq 1 ]]; then
+    local socks_line http_line
+    if [[ "$socks_exists" == "1" ]]; then
+      socks_line="SOCKS5: $( [[ "$socks_active" == "1" ]] && echo active || echo inactive ), port=${socks_port:-unknown}, user=${socks_user:-unknown}"
+    else
+      socks_line="SOCKS5: not configured"
+    fi
+
+    if [[ "$http_exists" == "1" ]]; then
+      http_line="HTTP:   $( [[ "$http_active" == "1" ]] && echo active || echo inactive ), port=${http_port:-unknown}, user=${http_user:-unknown}"
+      if [[ "$http_legacy" == "1" ]]; then
+        http_line="${http_line} (legacy config)"
+      fi
+    else
+      http_line="HTTP:   not configured"
+    fi
+
+    tui_card "ship-scan" "${socks_line}\n${http_line}"
+    return
+  fi
 
   printf '\n[ship-scan] detected beammeup setups on target:\n'
   if [[ "$socks_exists" == "1" ]]; then
@@ -1680,17 +1724,30 @@ chmod 600 "$SSH_KNOWN_HOSTS" 2>/dev/null || true
 SSH_COMMON_OPTS=(
   -o StrictHostKeyChecking=no
   -o UserKnownHostsFile="$SSH_KNOWN_HOSTS"
+  -o LogLevel=ERROR
   -o ConnectTimeout=15
 )
 
 run_scp() {
-  SSHPASS="$SSH_PASSWORD" sshpass -e scp "${SSH_COMMON_OPTS[@]}" -P "$SSH_PORT" "$1" "$SSH_USER@$HOST:$2" \
-    2> >(tr -d '\r' | grep -v "Permanently added .*known hosts" >&2)
+  local src="$1"
+  local dst="$2"
+  local cmd=(env SSHPASS="$SSH_PASSWORD" sshpass -e scp "${SSH_COMMON_OPTS[@]}" -P "$SSH_PORT" "$src" "$SSH_USER@$HOST:$dst")
+  if [[ "$USE_TUI" -eq 1 ]]; then
+    gum spin --spinner dot --title "uploading remote command deck..." -- "${cmd[@]}"
+  else
+    "${cmd[@]}"
+  fi
 }
 
 run_ssh() {
-  SSHPASS="$SSH_PASSWORD" sshpass -e ssh "${SSH_COMMON_OPTS[@]}" -p "$SSH_PORT" "$SSH_USER@$HOST" "$1" \
-    2> >(tr -d '\r' | grep -v "Permanently added .*known hosts" >&2)
+  local remote_cmd="$1"
+  local title="${2:-running remote command...}"
+  local cmd=(env SSHPASS="$SSH_PASSWORD" sshpass -e ssh "${SSH_COMMON_OPTS[@]}" -p "$SSH_PORT" "$SSH_USER@$HOST" "$remote_cmd")
+  if [[ "$USE_TUI" -eq 1 ]]; then
+    gum spin --spinner dot --title "$title" -- "${cmd[@]}"
+  else
+    "${cmd[@]}"
+  fi
 }
 
 run_remote_mode() {
@@ -1714,14 +1771,18 @@ run_remote_mode() {
     args="$args --rotate-credentials"
   fi
 
-  run_ssh "bash $REMOTE_SCRIPT_PATH $args"
+  run_ssh "bash $REMOTE_SCRIPT_PATH $args" "running ${mode} on target..."
 }
 
 phase 1 4 "transporter lock"
-printf '[beammeup] target summary:\n'
-printf '  Host: %s\n' "$HOST"
-printf '  SSH:  %s@%s:%s\n' "$SSH_USER" "$HOST" "$SSH_PORT"
-printf '\n'
+if [[ "$USE_TUI" -eq 1 ]]; then
+  tui_card "target summary" "Host: ${HOST}\nSSH:  ${SSH_USER}@${HOST}:${SSH_PORT}"
+else
+  printf '[beammeup] target summary:\n'
+  printf '  Host: %s\n' "$HOST"
+  printf '  SSH:  %s@%s:%s\n' "$SSH_USER" "$HOST" "$SSH_PORT"
+  printf '\n'
+fi
 if [[ "$AUTO_YES" -ne 1 ]]; then
   if ! prompt_yes_no_default "Continue mission to ${HOST}?" "Y"; then
     die "Cancelled."
@@ -1729,7 +1790,9 @@ if [[ "$AUTO_YES" -ne 1 ]]; then
 fi
 
 phase 2 4 "upload remote command deck"
-info "uploading remote command deck..."
+if [[ "$USE_TUI" -eq 0 ]]; then
+  info "uploading remote command deck..."
+fi
 run_scp "$TMP_REMOTE_SCRIPT" "$REMOTE_SCRIPT_PATH"
 
 phase 3 4 "ship scan and mission planning"
@@ -1871,10 +1934,14 @@ if [[ "$REMOTE_MODE" == "preflight" ]]; then
   PREFLIGHT_PORT="$(extract_value "BM_PREFLIGHT_PORT" "$RESULT_OUTPUT" || true)"
   [[ "$PREFLIGHT_RESULT" == "OK" ]] || die "Preflight failed."
 
-  printf '\nPreflight passed. No changes were made.\n'
-  printf '  Protocol: %s\n' "$PREFLIGHT_PROTOCOL"
-  printf '  Port: %s\n' "$PREFLIGHT_PORT"
-  printf '  Status: ready for launch.\n'
+  if [[ "$USE_TUI" -eq 1 ]]; then
+    tui_card "preflight passed" "No changes were made.\nProtocol: ${PREFLIGHT_PROTOCOL}\nPort: ${PREFLIGHT_PORT}\nStatus: ready for launch."
+  else
+    printf '\nPreflight passed. No changes were made.\n'
+    printf '  Protocol: %s\n' "$PREFLIGHT_PROTOCOL"
+    printf '  Port: %s\n' "$PREFLIGHT_PORT"
+    printf '  Status: ready for launch.\n'
+  fi
   exit 0
 fi
 
@@ -1892,53 +1959,82 @@ if [[ -z "$RESULT_HOST" || "$RESULT_HOST" == "UNKNOWN" ]]; then
 fi
 
 if [[ "$RESULT_PROTOCOL" == "DESTROY" ]]; then
-  printf '\n[beammeup] destroy hangar complete.\n'
-  printf '  Target: %s\n' "$RESULT_HOST"
-  if [[ -n "$RESULT_NOTE" ]]; then
-    printf '  Result: %s\n' "$RESULT_NOTE"
+  if [[ "$USE_TUI" -eq 1 ]]; then
+    tui_card "destroy hangar complete" "Target: ${RESULT_HOST}\nResult: ${RESULT_NOTE:-done}\n\njump successful."
+  else
+    printf '\n[beammeup] destroy hangar complete.\n'
+    printf '  Target: %s\n' "$RESULT_HOST"
+    if [[ -n "$RESULT_NOTE" ]]; then
+      printf '  Result: %s\n' "$RESULT_NOTE"
+    fi
+    printf '\n[beammeup] jump successful.\n'
   fi
-  printf '\n[beammeup] jump successful.\n'
   exit 0
 fi
 
-printf '\n'
-print_connection_box \
-  "$RESULT_ACTION" \
-  "$RESULT_PROTOCOL" \
-  "$RESULT_HOST" \
-  "$RESULT_PORT" \
-  "$RESULT_USER" \
-  "$RESULT_PASS"
+if [[ "$USE_TUI" -eq 1 ]]; then
+  tui_card "mission complete (${RESULT_PROTOCOL})" \
+    "Action: ${RESULT_ACTION}\nHost: ${RESULT_HOST}\nPort: ${RESULT_PORT}\nUsername: ${RESULT_USER:-<not available>}\nPassword: ${RESULT_PASS:-<not retrievable>}"
+else
+  printf '\n'
+  print_connection_box \
+    "$RESULT_ACTION" \
+    "$RESULT_PROTOCOL" \
+    "$RESULT_HOST" \
+    "$RESULT_PORT" \
+    "$RESULT_USER" \
+    "$RESULT_PASS"
+fi
 
 if [[ -n "$RESULT_FIREWALL" ]]; then
-  printf '\nFirewall note: %s\n' "$RESULT_FIREWALL"
+  if [[ "$USE_TUI" -eq 1 ]]; then
+    tui_card "firewall note" "$RESULT_FIREWALL"
+  else
+    printf '\nFirewall note: %s\n' "$RESULT_FIREWALL"
+  fi
 fi
 
 if [[ -n "$RESULT_NOTE" ]]; then
-  printf 'Note: %s\n' "$RESULT_NOTE"
+  if [[ "$USE_TUI" -eq 1 ]]; then
+    tui_card "note" "$RESULT_NOTE"
+  else
+    printf 'Note: %s\n' "$RESULT_NOTE"
+  fi
 fi
 
-printf '\n[beammeup] jump successful.\n'
+if [[ "$USE_TUI" -eq 0 ]]; then
+  printf '\n[beammeup] jump successful.\n'
+fi
 
-printf '\nChrome extension setup:\n'
-if [[ "$RESULT_PROTOCOL" == "HTTP" ]]; then
-  printf '  Type: HTTP proxy\n'
-  printf '  Server: %s\n' "$RESULT_HOST"
-  printf '  Port: %s\n' "$RESULT_PORT"
-  printf '  Enter username/password when prompted\n'
-  printf "\nQuick test:\n"
-  if [[ -n "$RESULT_PASS" ]]; then
-    printf "  curl -x 'http://%s:%s@%s:%s' https://api.ipify.org\n" \
-      "$RESULT_USER" "$RESULT_PASS" "$RESULT_HOST" "$RESULT_PORT"
+if [[ "$USE_TUI" -eq 1 ]]; then
+  if [[ "$RESULT_PROTOCOL" == "HTTP" ]]; then
+    tui_card "chrome extension setup" \
+      "Type: HTTP proxy\nServer: ${RESULT_HOST}\nPort: ${RESULT_PORT}\nAuth: enter username/password when prompted\n\nQuick test:\ncurl -x 'http://${RESULT_USER}:${RESULT_PASS}@${RESULT_HOST}:${RESULT_PORT}' https://api.ipify.org"
+  else
+    tui_card "chrome extension setup" \
+      "Type: SOCKS5\nServer: ${RESULT_HOST}\nPort: ${RESULT_PORT}\nAuth: use username/password above\n\nQuick test:\ncurl -x 'socks5h://${RESULT_USER}:${RESULT_PASS}@${RESULT_HOST}:${RESULT_PORT}' https://api.ipify.org"
   fi
 else
-  printf '  Type: SOCKS5\n'
-  printf '  Server: %s\n' "$RESULT_HOST"
-  printf '  Port: %s\n' "$RESULT_PORT"
-  printf '  Username/Password: use values above\n'
-  printf "\nQuick test:\n"
-  if [[ -n "$RESULT_PASS" ]]; then
-    printf "  curl -x 'socks5h://%s:%s@%s:%s' https://api.ipify.org\n" \
-      "$RESULT_USER" "$RESULT_PASS" "$RESULT_HOST" "$RESULT_PORT"
+  printf '\nChrome extension setup:\n'
+  if [[ "$RESULT_PROTOCOL" == "HTTP" ]]; then
+    printf '  Type: HTTP proxy\n'
+    printf '  Server: %s\n' "$RESULT_HOST"
+    printf '  Port: %s\n' "$RESULT_PORT"
+    printf '  Enter username/password when prompted\n'
+    printf "\nQuick test:\n"
+    if [[ -n "$RESULT_PASS" ]]; then
+      printf "  curl -x 'http://%s:%s@%s:%s' https://api.ipify.org\n" \
+        "$RESULT_USER" "$RESULT_PASS" "$RESULT_HOST" "$RESULT_PORT"
+    fi
+  else
+    printf '  Type: SOCKS5\n'
+    printf '  Server: %s\n' "$RESULT_HOST"
+    printf '  Port: %s\n' "$RESULT_PORT"
+    printf '  Username/Password: use values above\n'
+    printf "\nQuick test:\n"
+    if [[ -n "$RESULT_PASS" ]]; then
+      printf "  curl -x 'socks5h://%s:%s@%s:%s' https://api.ipify.org\n" \
+        "$RESULT_USER" "$RESULT_PASS" "$RESULT_HOST" "$RESULT_PORT"
+    fi
   fi
 fi
