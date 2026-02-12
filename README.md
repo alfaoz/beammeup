@@ -34,6 +34,8 @@ ship files store host/protocol defaults and never store ssh passwords.
 - persistent cockpit loop with back navigation
 - onboarding flow when no ships exist
 - launch flow that detects `online | missing | drift`
+- HTTP conflict wizard when existing Squid config is detected
+- isolated HTTP sidecar mode (`--http-mode sidecar`) that never overwrites `/etc/squid/squid.conf`
 - one hangar can manage both http and socks5 configs
 - in-memory ssh password cache per session only
 - non-interactive flags kept for automation parity
@@ -66,6 +68,18 @@ beammeup \
   --host 203.0.113.10 \
   --ssh-user root \
   --protocol http \
+  --proxy-port 18181 \
+  --action configure
+```
+
+configure isolated http sidecar (safe with existing squid):
+
+```bash
+beammeup \
+  --host 203.0.113.10 \
+  --ssh-user root \
+  --protocol http \
+  --http-mode sidecar \
   --proxy-port 18181 \
   --action configure
 ```

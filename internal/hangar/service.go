@@ -24,6 +24,7 @@ type ProtocolState struct {
 	Port    string
 	User    string
 	Pass    string
+	Mode    string
 	Managed bool
 	Legacy  bool
 }
@@ -39,6 +40,7 @@ type Inventory struct {
 type ActionInput struct {
 	Mode              string // inventory|show|preflight|apply|destroy
 	Protocol          string // http|socks5
+	HTTPMode          string // auto|sidecar
 	ProxyPort         int
 	NoFirewallChange  bool
 	RotateCredentials bool
@@ -46,6 +48,7 @@ type ActionInput struct {
 
 type ActionResult struct {
 	Protocol     string
+	HTTPMode     string
 	Host         string
 	Port         string
 	User         string
@@ -84,6 +87,9 @@ func (s *Service) runRemote(target sshx.Target, in ActionInput) (remote.KeyValue
 	args := []string{"--mode", in.Mode}
 	if strings.TrimSpace(in.Protocol) != "" {
 		args = append(args, "--protocol", in.Protocol)
+	}
+	if strings.TrimSpace(in.HTTPMode) != "" {
+		args = append(args, "--http-mode", in.HTTPMode)
 	}
 	if in.ProxyPort > 0 {
 		args = append(args, "--proxy-port", fmt.Sprintf("%d", in.ProxyPort))
@@ -133,6 +139,7 @@ func parseInventory(kv remote.KeyValues) Inventory {
 			Port:   kv.Get("BM_SOCKS_PORT"),
 			User:   kv.Get("BM_SOCKS_USER"),
 			Pass:   kv.Get("BM_SOCKS_PASS"),
+			Mode:   kv.Get("BM_SOCKS_MODE"),
 		},
 		HTTP: ProtocolState{
 			Exists:  kv.Bool("BM_HTTP_EXISTS"),
@@ -140,6 +147,7 @@ func parseInventory(kv remote.KeyValues) Inventory {
 			Port:    kv.Get("BM_HTTP_PORT"),
 			User:    kv.Get("BM_HTTP_USER"),
 			Pass:    kv.Get("BM_HTTP_PASS"),
+			Mode:    kv.Get("BM_HTTP_MODE"),
 			Managed: kv.Bool("BM_HTTP_MANAGED"),
 			Legacy:  kv.Bool("BM_HTTP_LEGACY"),
 		},
@@ -169,6 +177,7 @@ func (s *Service) Execute(ship ships.Ship, password string, in ActionInput) (Act
 
 	res := ActionResult{
 		Protocol:     kv.Get("BM_RESULT_PROTOCOL"),
+		HTTPMode:     kv.Get("BM_RESULT_HTTP_MODE"),
 		Host:         kv.Get("BM_RESULT_HOST"),
 		Port:         kv.Get("BM_RESULT_PORT"),
 		User:         kv.Get("BM_RESULT_USER"),

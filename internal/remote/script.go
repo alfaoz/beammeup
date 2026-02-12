@@ -198,6 +198,12 @@ SOCKS_SERVICE="beammeup-microsocks.service"
 SOCKS_SERVICE_FILE="/etc/systemd/system/${SOCKS_SERVICE}"
 HTTP_ENV="${BEAM_DIR}/http.env"
 HTTP_HTPASSWD="${BEAM_DIR}/http.htpasswd"
+HTTP_SIDECAR_DIR="${BEAM_DIR}/http-sidecar"
+HTTP_SIDECAR_CONF="${HTTP_SIDECAR_DIR}/squid.conf"
+HTTP_SIDECAR_HTPASSWD="${HTTP_SIDECAR_DIR}/htpasswd"
+HTTP_SIDECAR_LOG_DIR="/var/log/beammeup-http"
+HTTP_SIDECAR_SERVICE="beammeup-http-sidecar.service"
+HTTP_SIDECAR_SERVICE_FILE="/etc/systemd/system/${HTTP_SIDECAR_SERVICE}"
 SQUID_CONF="/etc/squid/squid.conf"
 SQUID_BACKUP="/etc/squid/squid.conf.beammeup.bak"
 HANGAR_META="${BEAM_DIR}/hangar.json"
@@ -213,6 +219,7 @@ HTTP_ACTIVE=0
 HTTP_PORT=""
 HTTP_USER=""
 HTTP_PASS=""
+HTTP_MODE=""
 HTTP_MANAGED=0
 HTTP_LEGACY=0
 
@@ -246,25 +253,48 @@ load_http_state() {
   HTTP_PORT=""
   HTTP_USER=""
   HTTP_PASS=""
+  HTTP_MODE=""
   HTTP_MANAGED=0
   HTTP_LEGACY=0
 
   HTTP_PORT="$(read_env_value "$HTTP_ENV" PROXY_PORT || true)"
   HTTP_USER="$(read_env_value "$HTTP_ENV" PROXY_USER || true)"
   HTTP_PASS="$(read_env_value "$HTTP_ENV" PROXY_PASS || true)"
+  HTTP_MODE="$(read_env_value "$HTTP_ENV" HTTP_MODE || true)"
+
+  if [[ "$HTTP_MODE" != "sidecar" ]]; then
+    HTTP_MODE=""
+  fi
 
   if [[ -f "$HTTP_ENV" ]]; then
     HTTP_EXISTS=1
-    HTTP_MANAGED=1
+  fi
+
+  if [[ "$HTTP_MODE" == "sidecar" || -f "$HTTP_SIDECAR_SERVICE_FILE" || -f "$HTTP_SIDECAR_CONF" ]]; then
+    HTTP_EXISTS=1
+    HTTP_MODE="sidecar"
+
+    if [[ -z "$HTTP_PORT" && -f "$HTTP_SIDECAR_CONF" ]]; then
+      HTTP_PORT="$(awk '/^http_port[[:space:]]+/ {print $2; exit}' "$HTTP_SIDECAR_CONF" 2>/dev/null || true)"
+    fi
+    if [[ -z "$HTTP_USER" && -f "$HTTP_SIDECAR_HTPASSWD" ]]; then
+      HTTP_USER="$(awk -F: 'NR==1 {print $1}' "$HTTP_SIDECAR_HTPASSWD" 2>/dev/null || true)"
+    fi
+    if service_defined "$HTTP_SIDECAR_SERVICE"; then
+      HTTP_ACTIVE="$(service_active "$HTTP_SIDECAR_SERVICE")"
+    fi
+    return
   fi
 
   if [[ -f "$SQUID_CONF" ]]; then
     if grep -q "managed by beammeup" "$SQUID_CONF"; then
       HTTP_EXISTS=1
       HTTP_MANAGED=1
+      HTTP_MODE="managed"
     elif grep -q "beammeup-proxy" "$SQUID_CONF"; then
       HTTP_EXISTS=1
       HTTP_LEGACY=1
+      HTTP_MODE="legacy"
     fi
 
     if [[ -z "$HTTP_PORT" ]]; then
@@ -360,9 +390,11 @@ print_inventory() {
   printf 'BM_SOCKS_PORT=%s\n' "$SOCKS_PORT"
   printf 'BM_SOCKS_USER=%s\n' "$SOCKS_USER"
   printf 'BM_SOCKS_PASS=%s\n' "$SOCKS_PASS"
+  printf 'BM_SOCKS_MODE=managed\n'
 
   printf 'BM_HTTP_EXISTS=%s\n' "$HTTP_EXISTS"
   printf 'BM_HTTP_ACTIVE=%s\n' "$HTTP_ACTIVE"
+  printf 'BM_HTTP_MODE=%s\n' "$HTTP_MODE"
   printf 'BM_HTTP_MANAGED=%s\n' "$HTTP_MANAGED"
   printf 'BM_HTTP_LEGACY=%s\n' "$HTTP_LEGACY"
   printf 'BM_HTTP_PORT=%s\n' "$HTTP_PORT"
@@ -386,6 +418,7 @@ emit_result() {
   printf 'BM_RESULT_PORT=%s\n' "$port"
   printf 'BM_RESULT_USER=%s\n' "$user"
   printf 'BM_RESULT_PASS=%s\n' "$pass"
+  printf 'BM_RESULT_HTTP_MODE=%s\n' "$HTTP_MODE"
   printf 'BM_RESULT_ACTION=%s\n' "$action"
   printf 'BM_RESULT_FIREWALL_NOTE=%s\n' "${FIREWALL_NOTE:-}"
   printf 'BM_RESULT_NOTE=%s\n' "$note"
@@ -408,6 +441,18 @@ run_preflight() {
     current_port="$HTTP_PORT"
     if [[ -z "$chosen_port" ]]; then
       chosen_port="${HTTP_PORT:-18181}"
+    fi
+
+    local mode="${HTTP_MODE_REQUEST:-auto}"
+    if [[ "$mode" == "auto" && "$HTTP_MODE" == "sidecar" ]]; then
+      mode="sidecar"
+    fi
+    if [[ "$mode" != "sidecar" ]]; then
+      if [[ -f "$SQUID_CONF" ]] && ! grep -q "managed by beammeup" "$SQUID_CONF"; then
+        if ! grep -q "beammeup-proxy" "$SQUID_CONF"; then
+          die "Existing non-beammeup Squid config detected at $SQUID_CONF. Use --http-mode sidecar or choose SOCKS5."
+        fi
+      fi
     fi
   fi
 
@@ -506,54 +551,29 @@ EOF_UNIT
     "$( [[ "$existed" == "1" ]] && echo updated || echo created )" "$note"
 }
 
-apply_http() {
-  ensure_requirements
-  ensure_packages squid apache2-utils curl
-
-  mkdir -p "$BEAM_DIR"
-
-  if [[ -f "$SQUID_CONF" ]] && ! grep -q "managed by beammeup" "$SQUID_CONF"; then
-    if ! grep -q "beammeup-proxy" "$SQUID_CONF"; then
-      die "Existing non-beammeup Squid config detected at $SQUID_CONF. Refusing to overwrite."
-    fi
-  fi
-
-  load_http_state
-  load_socks_state
-
-  local existed="$HTTP_EXISTS"
-  local desired_port="${PROXY_PORT:-${HTTP_PORT:-18181}}"
-  local final_user="$HTTP_USER"
-  local final_pass="$HTTP_PASS"
-  local note=""
-
-  is_valid_port "$desired_port" || die "Invalid proxy port: $desired_port"
-  ensure_port_available "$desired_port" "$HTTP_PORT"
-
-  if [[ -z "$final_user" || "$ROTATE_CREDENTIALS" -eq 1 ]]; then
-    final_user="beamhttp$(generate_secret 'a-z0-9' 4)"
-  fi
-
-  if [[ -z "$final_pass" || "$ROTATE_CREDENTIALS" -eq 1 ]]; then
-    final_pass="$(generate_secret 'A-Za-z0-9' 20)"
-    if [[ "$HTTP_LEGACY" == "1" && "$ROTATE_CREDENTIALS" -eq 0 ]]; then
-      note="Legacy HTTP setup detected. Password regenerated because existing password cannot be recovered."
-    elif [[ "$ROTATE_CREDENTIALS" -eq 1 ]]; then
-      note="Credentials rotated."
-    fi
-  fi
-
-  local auth_helper
-  auth_helper="$(find_squid_auth_helper || true)"
-  [[ -n "$auth_helper" ]] || die "Could not locate Squid basic_ncsa_auth helper."
-
+write_http_env() {
+  local mode="$1"
+  local port="$2"
+  local user="$3"
+  local pass="$4"
   cat >"$HTTP_ENV" <<EOF_ENV
-PROXY_PORT=$desired_port
-PROXY_USER=$final_user
-PROXY_PASS=$final_pass
+PROXY_PORT=$port
+PROXY_USER=$user
+PROXY_PASS=$pass
+HTTP_MODE=$mode
 EOF_ENV
   chmod 600 "$HTTP_ENV"
+}
 
+apply_http_managed() {
+  local desired_port="$1"
+  local final_user="$2"
+  local final_pass="$3"
+  local existed="$4"
+  local note="$5"
+  local auth_helper="$6"
+
+  write_http_env "managed" "$desired_port" "$final_user" "$final_pass"
   htpasswd -bc "$HTTP_HTPASSWD" "$final_user" "$final_pass" >/dev/null
   chown proxy:proxy "$HTTP_HTPASSWD" 2>/dev/null || true
   chmod 640 "$HTTP_HTPASSWD"
@@ -605,14 +625,184 @@ EOF_SQUID
   fi
 
   apply_firewall_rule "$desired_port"
-
   load_http_state
   load_socks_state
   reconcile_hangar_status
-  write_hangar_metadata "$HANGAR_STATUS" "updated http"
-
+  write_hangar_metadata "$HANGAR_STATUS" "updated http managed"
   emit_result "HTTP" "$desired_port" "$final_user" "$final_pass" \
     "$( [[ "$existed" == "1" ]] && echo updated || echo created )" "$note"
+}
+
+apply_http_sidecar() {
+  local desired_port="$1"
+  local final_user="$2"
+  local final_pass="$3"
+  local existed="$4"
+  local note="$5"
+  local auth_helper="$6"
+
+  mkdir -p "$HTTP_SIDECAR_DIR" "$HTTP_SIDECAR_LOG_DIR"
+
+  write_http_env "sidecar" "$desired_port" "$final_user" "$final_pass"
+  htpasswd -bc "$HTTP_SIDECAR_HTPASSWD" "$final_user" "$final_pass" >/dev/null
+  chown proxy:proxy "$HTTP_SIDECAR_HTPASSWD" 2>/dev/null || true
+  chmod 640 "$HTTP_SIDECAR_HTPASSWD"
+  chown proxy:proxy "$HTTP_SIDECAR_LOG_DIR" 2>/dev/null || true
+  chmod 750 "$HTTP_SIDECAR_LOG_DIR" || true
+
+  cat >"$HTTP_SIDECAR_CONF" <<EOF_SQUID
+# managed by beammeup (http sidecar)
+http_port $desired_port
+
+acl SSL_ports port 443
+acl Safe_ports port 80
+acl Safe_ports port 443
+acl Safe_ports port 1025-65535
+acl CONNECT method CONNECT
+
+http_access deny !Safe_ports
+http_access deny CONNECT !SSL_ports
+
+auth_param basic program $auth_helper $HTTP_SIDECAR_HTPASSWD
+auth_param basic realm beammeup-sidecar
+auth_param basic credentialsttl 8 hours
+acl authenticated proxy_auth REQUIRED
+
+http_access allow authenticated
+http_access deny all
+
+forwarded_for delete
+request_header_access X-Forwarded-For deny all
+request_header_access Via deny all
+
+cache deny all
+access_log stdio:$HTTP_SIDECAR_LOG_DIR/access.log
+cache_log $HTTP_SIDECAR_LOG_DIR/cache.log
+coredump_dir /var/spool/squid
+pid_filename /run/beammeup-http/sidecar.pid
+EOF_SQUID
+
+  cat >"$HTTP_SIDECAR_SERVICE_FILE" <<EOF_UNIT
+[Unit]
+Description=Beammeup HTTP Sidecar Proxy
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=proxy
+Group=proxy
+RuntimeDirectory=beammeup-http
+RuntimeDirectoryMode=0750
+ExecStart=/usr/sbin/squid -N -f $HTTP_SIDECAR_CONF
+ExecReload=/usr/sbin/squid -k reconfigure -f $HTTP_SIDECAR_CONF
+Restart=always
+RestartSec=2
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=$HTTP_SIDECAR_DIR $HTTP_SIDECAR_LOG_DIR /run
+
+[Install]
+WantedBy=multi-user.target
+EOF_UNIT
+  chmod 644 "$HTTP_SIDECAR_SERVICE_FILE"
+
+  squid -k parse -f "$HTTP_SIDECAR_CONF"
+  systemctl daemon-reload
+  systemctl enable --now "$HTTP_SIDECAR_SERVICE"
+  sleep 1
+  if ! systemctl is-active --quiet "$HTTP_SIDECAR_SERVICE"; then
+    journalctl -u "$HTTP_SIDECAR_SERVICE" -n 50 --no-pager >&2 || true
+    die "HTTP sidecar service failed to start."
+  fi
+
+  apply_firewall_rule "$desired_port"
+  load_http_state
+  load_socks_state
+  reconcile_hangar_status
+  write_hangar_metadata "$HANGAR_STATUS" "updated http sidecar"
+  emit_result "HTTP" "$desired_port" "$final_user" "$final_pass" \
+    "$( [[ "$existed" == "1" ]] && echo updated || echo created )" "$note"
+}
+
+apply_http() {
+  ensure_requirements
+  ensure_packages squid apache2-utils curl
+
+  mkdir -p "$BEAM_DIR"
+  load_http_state
+  load_socks_state
+
+  local unmanaged_conf=0
+  if [[ -f "$SQUID_CONF" ]] && ! grep -q "managed by beammeup" "$SQUID_CONF"; then
+    if ! grep -q "beammeup-proxy" "$SQUID_CONF"; then
+      unmanaged_conf=1
+    fi
+  fi
+
+  local mode="${HTTP_MODE_REQUEST:-auto}"
+  case "$mode" in
+    ""|auto) mode="auto" ;;
+    managed|sidecar) ;;
+    *) die "Invalid --http-mode value: $mode (use auto or sidecar)." ;;
+  esac
+
+  if [[ "$mode" == "auto" ]]; then
+    if [[ "$HTTP_MODE" == "sidecar" ]]; then
+      mode="sidecar"
+    else
+      if [[ "$unmanaged_conf" -eq 1 ]]; then
+        die "Existing non-beammeup Squid config detected at $SQUID_CONF. Refusing to overwrite."
+      fi
+      mode="managed"
+    fi
+  fi
+
+  if [[ "$mode" == "managed" && "$unmanaged_conf" -eq 1 ]]; then
+    die "Existing non-beammeup Squid config detected at $SQUID_CONF. Refusing to overwrite."
+  fi
+
+  local existed="$HTTP_EXISTS"
+  local current_port="$HTTP_PORT"
+  if [[ "$mode" == "managed" && "$HTTP_MODE" != "sidecar" ]]; then
+    current_port="$HTTP_PORT"
+  elif [[ "$mode" == "sidecar" && "$HTTP_MODE" == "sidecar" ]]; then
+    current_port="$HTTP_PORT"
+  else
+    current_port=""
+  fi
+
+  local desired_port="${PROXY_PORT:-${HTTP_PORT:-18181}}"
+  local final_user="$HTTP_USER"
+  local final_pass="$HTTP_PASS"
+  local note=""
+
+  is_valid_port "$desired_port" || die "Invalid proxy port: $desired_port"
+  ensure_port_available "$desired_port" "$current_port"
+
+  if [[ -z "$final_user" || "$ROTATE_CREDENTIALS" -eq 1 ]]; then
+    final_user="beamhttp$(generate_secret 'a-z0-9' 4)"
+  fi
+  if [[ -z "$final_pass" || "$ROTATE_CREDENTIALS" -eq 1 ]]; then
+    final_pass="$(generate_secret 'A-Za-z0-9' 20)"
+    if [[ "$HTTP_LEGACY" == "1" && "$ROTATE_CREDENTIALS" -eq 0 ]]; then
+      note="Legacy HTTP setup detected. Password regenerated because existing password cannot be recovered."
+    elif [[ "$ROTATE_CREDENTIALS" -eq 1 ]]; then
+      note="Credentials rotated."
+    fi
+  fi
+
+  local auth_helper
+  auth_helper="$(find_squid_auth_helper || true)"
+  [[ -n "$auth_helper" ]] || die "Could not locate Squid basic_ncsa_auth helper."
+
+  if [[ "$mode" == "sidecar" ]]; then
+    apply_http_sidecar "$desired_port" "$final_user" "$final_pass" "$existed" "$note" "$auth_helper"
+  else
+    apply_http_managed "$desired_port" "$final_user" "$final_pass" "$existed" "$note" "$auth_helper"
+  fi
 }
 
 show_setup() {
@@ -658,21 +848,32 @@ destroy_hangar() {
 
   if [[ "$HTTP_EXISTS" == "1" ]]; then
     cleanup_firewall_rule "${HTTP_PORT:-}"
-    if service_defined "squid.service"; then
-      systemctl disable --now squid >/dev/null 2>&1 || true
-    fi
-    rm -f "$HTTP_ENV" "$HTTP_HTPASSWD"
-
-    if [[ -f "$SQUID_BACKUP" ]]; then
-      cp "$SQUID_BACKUP" "$SQUID_CONF"
-      note_parts+=("restored squid backup")
-      if service_defined "squid.service"; then
-        systemctl enable --now squid >/dev/null 2>&1 || true
+    if [[ "$HTTP_MODE" == "sidecar" || -f "$HTTP_SIDECAR_SERVICE_FILE" || -f "$HTTP_SIDECAR_CONF" ]]; then
+      if service_defined "$HTTP_SIDECAR_SERVICE"; then
+        systemctl disable --now "$HTTP_SIDECAR_SERVICE" >/dev/null 2>&1 || true
       fi
-    elif [[ -f "$SQUID_CONF" ]] && (grep -q "managed by beammeup" "$SQUID_CONF" || grep -q "beammeup-proxy" "$SQUID_CONF"); then
-      rm -f "$SQUID_CONF"
-      note_parts+=("removed beammeup squid config")
+      rm -f "$HTTP_SIDECAR_SERVICE_FILE"
+      rm -rf "$HTTP_SIDECAR_DIR"
+      note_parts+=("HTTP sidecar removed")
+    else
+      if service_defined "squid.service"; then
+        systemctl disable --now squid >/dev/null 2>&1 || true
+      fi
+      rm -f "$HTTP_HTPASSWD"
+
+      if [[ -f "$SQUID_BACKUP" ]]; then
+        cp "$SQUID_BACKUP" "$SQUID_CONF"
+        note_parts+=("restored squid backup")
+        if service_defined "squid.service"; then
+          systemctl enable --now squid >/dev/null 2>&1 || true
+        fi
+      elif [[ -f "$SQUID_CONF" ]] && (grep -q "managed by beammeup" "$SQUID_CONF" || grep -q "beammeup-proxy" "$SQUID_CONF"); then
+        rm -f "$SQUID_CONF"
+        note_parts+=("removed beammeup squid config")
+      fi
     fi
+
+    rm -f "$HTTP_ENV"
 
     removed_any=1
     note_parts+=("HTTP removed")
@@ -690,6 +891,7 @@ destroy_hangar() {
 
 MODE="inventory"
 PROTOCOL=""
+HTTP_MODE_REQUEST=""
 PROXY_PORT=""
 NO_FIREWALL_CHANGE=0
 ROTATE_CREDENTIALS=0
@@ -702,6 +904,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --protocol)
       PROTOCOL="$2"
+      shift 2
+      ;;
+    --http-mode)
+      HTTP_MODE_REQUEST="$2"
       shift 2
       ;;
     --proxy-port)

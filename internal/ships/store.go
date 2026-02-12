@@ -19,6 +19,7 @@ type Ship struct {
 	SSHPort          int
 	SSHUser          string
 	Protocol         string
+	HTTPMode         string
 	ProxyPort        int
 	NoFirewallChange bool
 }
@@ -134,6 +135,7 @@ func (s *Store) Load(name string) (Ship, error) {
 		SSHPort:          sshPort,
 		SSHUser:          defaultIfEmpty(vals["SSH_USER"], "root"),
 		Protocol:         protocol,
+		HTTPMode:         normalizeHTTPMode(vals["HTTP_MODE"]),
 		ProxyPort:        proxyPort,
 		NoFirewallChange: noFW,
 	}
@@ -160,6 +162,7 @@ func (s *Store) Save(ship Ship) (Ship, error) {
 	if strings.TrimSpace(ship.Protocol) == "" {
 		ship.Protocol = "http"
 	}
+	ship.HTTPMode = normalizeHTTPMode(ship.HTTPMode)
 	if ship.ProxyPort == 0 {
 		if ship.Protocol == "socks5" {
 			ship.ProxyPort = 1080
@@ -180,6 +183,7 @@ func (s *Store) Save(ship Ship) (Ship, error) {
 		"SSH_PORT=" + strconv.Itoa(ship.SSHPort),
 		"SSH_USER=" + ship.SSHUser,
 		"PROTOCOL=" + ship.Protocol,
+		"HTTP_MODE=" + ship.HTTPMode,
 		"PROXY_PORT=" + strconv.Itoa(ship.ProxyPort),
 		"NO_FIREWALL_CHANGE=" + noFW,
 		"",
@@ -219,4 +223,13 @@ func parseIntDefault(raw string, def int) int {
 		return def
 	}
 	return v
+}
+
+func normalizeHTTPMode(v string) string {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "sidecar":
+		return "sidecar"
+	default:
+		return ""
+	}
 }

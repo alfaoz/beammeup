@@ -14,6 +14,7 @@ type Options struct {
 	SSHUser          string
 	SSHPassword      string
 	Protocol         string
+	HTTPMode         string
 	ProxyPort        int
 	Action           string
 	ShowInventory    bool
@@ -50,6 +51,7 @@ func Parse(args []string) (Options, error) {
 	fs.StringVar(&opts.SSHUser, "ssh-user", opts.SSHUser, "SSH user")
 	fs.StringVar(&opts.SSHPassword, "ssh-password", "", "SSH password")
 	fs.StringVar(&opts.Protocol, "protocol", "", "http or socks5")
+	fs.StringVar(&opts.HTTPMode, "http-mode", "", "auto or sidecar")
 	fs.IntVar(&opts.ProxyPort, "proxy-port", 0, "Proxy port")
 	fs.StringVar(&opts.Action, "action", "", "show|configure|rotate|destroy")
 	fs.BoolVar(&opts.ShowInventory, "show-inventory", false, "Show inventory")
@@ -93,6 +95,18 @@ func NormalizeAction(v string) (string, bool) {
 		}
 		if v == "uninstall" {
 			return "destroy", true
+		}
+		return v, true
+	default:
+		return "", false
+	}
+}
+
+func NormalizeHTTPMode(v string) (string, bool) {
+	switch v {
+	case "", "auto", "sidecar":
+		if v == "auto" {
+			return "", true
 		}
 		return v, true
 	default:

@@ -20,6 +20,7 @@ func TestStoreSaveLoadLegacyCompatibility(t *testing.T) {
 		SSHPort:          22,
 		SSHUser:          "root",
 		Protocol:         "http",
+		HTTPMode:         "sidecar",
 		ProxyPort:        18181,
 		NoFirewallChange: true,
 	})
@@ -35,7 +36,7 @@ func TestStoreSaveLoadLegacyCompatibility(t *testing.T) {
 		t.Fatalf("ReadFile: %v", err)
 	}
 	got := string(content)
-	for _, key := range []string{"HOST=91.98.67.180", "SSH_PORT=22", "SSH_USER=root", "PROTOCOL=http", "PROXY_PORT=18181", "NO_FIREWALL_CHANGE=1"} {
+	for _, key := range []string{"HOST=91.98.67.180", "SSH_PORT=22", "SSH_USER=root", "PROTOCOL=http", "HTTP_MODE=sidecar", "PROXY_PORT=18181", "NO_FIREWALL_CHANGE=1"} {
 		if !strings.Contains(got, key) {
 			t.Fatalf("expected %q in file", key)
 		}
@@ -47,6 +48,9 @@ func TestStoreSaveLoadLegacyCompatibility(t *testing.T) {
 	}
 	if loaded.Host != "91.98.67.180" || loaded.SSHUser != "root" || loaded.ProxyPort != 18181 {
 		t.Fatalf("unexpected loaded ship: %+v", loaded)
+	}
+	if loaded.HTTPMode != "sidecar" {
+		t.Fatalf("expected HTTPMode=sidecar, got %q", loaded.HTTPMode)
 	}
 	if !loaded.NoFirewallChange {
 		t.Fatalf("expected NoFirewallChange=true")

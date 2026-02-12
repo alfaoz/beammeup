@@ -38,6 +38,7 @@ Options:
   --ssh-user <username>         SSH user (default: root)
   --ssh-password <password>     SSH password
   --protocol <http|socks5>      Target protocol for show/configure actions
+  --http-mode <auto|sidecar>    HTTP behavior when protocol is http
   --proxy-port <port>           Proxy port for configure/preflight
   --action <show|configure|rotate|destroy>
   --show-inventory              List detected beammeup setups and exit
@@ -61,7 +62,7 @@ func RequiresNonInteractive(opts Options, isTTY bool) bool {
 		return true
 	}
 	return opts.Host != "" || opts.ShipName != "" || opts.Action != "" || opts.ShowInventory || opts.PreflightOnly ||
-		opts.NoFirewallChange || opts.Protocol != "" || opts.ProxyPort > 0 || opts.Yes
+		opts.NoFirewallChange || opts.Protocol != "" || opts.HTTPMode != "" || opts.ProxyPort > 0 || opts.Yes
 }
 
 func (r *Runner) Run(opts Options) (int, error) {
@@ -72,6 +73,10 @@ func (r *Runner) Run(opts Options) (int, error) {
 	protocol, ok := NormalizeProtocol(strings.ToLower(strings.TrimSpace(opts.Protocol)))
 	if !ok {
 		return ExitUsage, errors.New("invalid --protocol. use http or socks5")
+	}
+	httpMode, ok := NormalizeHTTPMode(strings.ToLower(strings.TrimSpace(opts.HTTPMode)))
+	if !ok {
+		return ExitUsage, errors.New("invalid --http-mode. use auto or sidecar")
 	}
 	action, ok := NormalizeAction(strings.ToLower(strings.TrimSpace(opts.Action)))
 	if !ok {
@@ -102,6 +107,9 @@ func (r *Runner) Run(opts Options) (int, error) {
 	}
 	if protocol != "" {
 		ship.Protocol = protocol
+	}
+	if httpMode != "" || strings.EqualFold(strings.TrimSpace(opts.HTTPMode), "auto") {
+		ship.HTTPMode = httpMode
 	}
 	if opts.ProxyPort > 0 {
 		ship.ProxyPort = opts.ProxyPort
@@ -177,6 +185,7 @@ func (r *Runner) Run(opts Options) (int, error) {
 	case action == "show":
 		in.Mode = "show"
 		in.Protocol = ship.Protocol
+		in.HTTPMode = ship.HTTPMode
 	case action == "destroy":
 		if !opts.Yes {
 			if !confirm("Destroy hangar on "+ship.Host+"?", false) {
@@ -192,10 +201,12 @@ func (r *Runner) Run(opts Options) (int, error) {
 	case opts.PreflightOnly:
 		in.Mode = "preflight"
 		in.Protocol = ship.Protocol
+		in.HTTPMode = ship.HTTPMode
 		in.ProxyPort = resolveProxyPort(ship, inv)
 	default:
 		in.Mode = "apply"
 		in.Protocol = ship.Protocol
+		in.HTTPMode = ship.HTTPMode
 		in.RotateCredentials = rotate
 		in.ProxyPort = resolveProxyPort(ship, inv)
 		in.NoFirewallChange = ship.NoFirewallChange
@@ -204,7 +215,7 @@ func (r *Runner) Run(opts Options) (int, error) {
 	res, err := r.Hangar.Execute(ship, password, in)
 	if err != nil {
 		if isHTTPSquidConflict(err) && in.Mode == "apply" && strings.EqualFold(in.Protocol, "http") {
-			return ExitFailure, fmt.Errorf("%w\nhint: this host already has its own squid config. retry with --protocol socks5 --proxy-port 18080", err)
+			return ExitFailure, fmt.Errorf("%w\nhint: retry with --http-mode sidecar (isolated HTTP) or --protocol socks5 --proxy-port 18080", err)
 		}
 		return ExitFailure, err
 	}
@@ -234,6 +245,9 @@ func (r *Runner) Run(opts Options) (int, error) {
 	fmt.Println("Connection details:")
 	fmt.Printf("  Host: %s\n", res.Host)
 	fmt.Printf("  Port: %s\n", res.Port)
+	if strings.EqualFold(res.Protocol, "HTTP") {
+		fmt.Printf("  HTTP mode: %s\n", fallback(res.HTTPMode, "managed"))
+	}
 	fmt.Printf("  Username: %s\n", fallback(res.User, "<not available>"))
 	fmt.Printf("  Password: %s\n", fallback(res.Pass, "<not retrievable>"))
 
@@ -319,7 +333,11 @@ func printInventorySummary(inv hangar.Inventory) {
 		if inv.HTTP.Legacy {
 			legacy = " (legacy config)"
 		}
-		fmt.Printf("  HTTP:   %s, port=%s, user=%s%s\n", state, fallback(inv.HTTP.Port, "unknown"), fallback(inv.HTTP.User, "unknown"), legacy)
+		mode := inv.HTTP.Mode
+		if strings.TrimSpace(mode) == "" {
+			mode = "managed"
+		}
+		fmt.Printf("  HTTP:   %s, mode=%s, port=%s, user=%s%s\n", state, mode, fallback(inv.HTTP.Port, "unknown"), fallback(inv.HTTP.User, "unknown"), legacy)
 	} else {
 		fmt.Println("  HTTP:   not configured")
 	}
