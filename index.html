@@ -11,7 +11,7 @@
     @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap');
 
     :root {
-      --bg: rgb(5, 5, 5);
+      --bg: rgb(0, 0, 0);
       --panel: #0b0b0b;
       --line: #1f1f1f;
       --text: #bdbdbd;
@@ -39,6 +39,23 @@
       display: grid;
       place-items: center;
       padding: 24px;
+      position: relative;
+    }
+
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      background:
+        radial-gradient(circle at 50% 50%, rgba(255,255,255,0.05), transparent 55%),
+        url("/ico.png") center / 520px 520px no-repeat;
+      opacity: 0.10;
+      filter: grayscale(100%);
+      pointer-events: none;
+    }
+
+    body.closed::before {
+      opacity: 0.18;
     }
 
     .frame {
@@ -48,6 +65,15 @@
       background: linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent 35%), var(--panel);
       box-shadow: 0 0 0 1px rgba(0,0,0,0.65), 0 24px 80px rgba(0,0,0,0.55);
       overflow: hidden;
+      transform-origin: 22px 22px;
+      transition: transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1), opacity 220ms ease, filter 220ms ease;
+    }
+
+    .frame.closing {
+      opacity: 0;
+      transform: translate(-14px, -12px) scale(0.86);
+      filter: blur(1px);
+      pointer-events: none;
     }
 
     .bar {
@@ -73,11 +99,29 @@
       height: 10px;
       border-radius: 50%;
       border: 1px solid rgba(255, 255, 255, 0.15);
+      padding: 0;
+      margin: 0;
+      appearance: none;
+      -webkit-appearance: none;
+      background: transparent;
+      display: inline-block;
     }
 
     .dot.r { background: var(--danger); }
     .dot.y { background: var(--yellow); }
     .dot.g { background: var(--green); }
+
+    .dot.close {
+      cursor: pointer;
+    }
+
+    .dot.close:hover {
+      box-shadow: 0 0 0 2px rgba(255, 95, 86, 0.12);
+    }
+
+    .dot.close:active {
+      transform: scale(0.94);
+    }
 
     .content {
       padding: 18px 16px 16px;
@@ -179,7 +223,7 @@
   <main class="frame" role="main">
     <div class="bar">
       <span class="lights" aria-hidden="true">
-        <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+        <button class="dot r close" id="closeBtn" type="button" aria-label="Close window"></button><span class="dot y"></span><span class="dot g"></span>
       </span>
       <span>beammeup.pw</span>
     </div>
@@ -201,7 +245,7 @@ _  /_/ /  __/ /_/ /_  / / / / /  / / / / /  __/ /_/ /__  /_/ /____  /_/ /_ |/ |/
       <div class="cmd" id="cmd" role="button" tabindex="0" aria-label="Copy install command">
         <span class="inline-hint" id="hint">click to copy</span>
         <span class="toast" id="toast">copied</span>
-        <code>$ curl -fsSL https://beammeup.pw/install.sh | bash</code>
+        <code>curl -fsSL https://beammeup.pw/install.sh | bash</code>
       </div>
 
       <div class="footer">
@@ -215,6 +259,8 @@ _  /_/ /  __/ /_/ /_  / / / / /  / / / / /  __/ /_/ /__  /_/ /____  /_/ /_ |/ |/
       var cmd = 'curl -fsSL https://beammeup.pw/install.sh | bash';
       var box = document.getElementById('cmd');
       var toast = document.getElementById('toast');
+      var frame = document.querySelector('.frame');
+      var closeBtn = document.getElementById('closeBtn');
 
       function showToast() {
         box.classList.add('copied');
@@ -249,6 +295,39 @@ _  /_/ /  __/ /_/ /_  / / / / /  / / / / /  __/ /_/ /__  /_/ /____  /_/ /_ |/ |/
           e.preventDefault();
           copy();
         }
+      });
+
+      function closeWindow() {
+        if (!frame || frame.hidden) return;
+        document.body.classList.add('closed');
+        frame.classList.add('closing');
+        window.setTimeout(function () {
+          frame.hidden = true;
+        }, 240);
+      }
+
+      function reopenWindow() {
+        if (!frame || !frame.hidden) return;
+        frame.hidden = false;
+        // allow a frame to render before we remove closing class
+        window.requestAnimationFrame(function () {
+          frame.classList.remove('closing');
+          document.body.classList.remove('closed');
+        });
+      }
+
+      if (closeBtn) {
+        closeBtn.addEventListener('click', function (e) {
+          e.stopPropagation();
+          closeWindow();
+        });
+      }
+
+      document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape') reopenWindow();
+      });
+      document.addEventListener('click', function () {
+        if (frame && frame.hidden) reopenWindow();
       });
     })();
   </script>
