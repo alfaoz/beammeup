@@ -7,7 +7,8 @@ DEFAULT_SOCKS_PORT=1080
 DEFAULT_HTTP_PORT=18181
 DEFAULT_BASE_URL="https://beammeup.pw"
 DEFAULT_SHIPS_DIR="${HOME:-.}/.beammeup/ships"
-BEAMMEUP_VERSION="1.3.1"
+BEAMMEUP_VERSION="1.4.0"
+USE_TUI=0
 
 info() {
   printf '[beammeup] %s\n' "$*"
@@ -29,6 +30,88 @@ box_line() {
   printf '| %-62s |\n' "$1"
 }
 
+require_tui() {
+  command -v dialog >/dev/null 2>&1 || die "Interactive mode requires 'dialog'. Install it first (macOS: brew install dialog, Debian/Ubuntu: apt-get install dialog)."
+}
+
+tui_input() {
+  local title="$1"
+  local prompt="$2"
+  local initial="${3:-}"
+  local tmp
+  tmp="$(mktemp -t beammeup-dialog.XXXXXX)"
+  if dialog --clear \
+    --backtitle "beammeup v${BEAMMEUP_VERSION}" \
+    --title "$title" \
+    --inputbox "$prompt" 12 80 "$initial" 2>"$tmp"; then
+    cat "$tmp"
+    rm -f "$tmp"
+    return 0
+  fi
+  rm -f "$tmp"
+  return 1
+}
+
+tui_password() {
+  local title="$1"
+  local prompt="$2"
+  local tmp
+  tmp="$(mktemp -t beammeup-dialog.XXXXXX)"
+  if dialog --clear \
+    --backtitle "beammeup v${BEAMMEUP_VERSION}" \
+    --title "$title" \
+    --insecure \
+    --passwordbox "$prompt" 12 80 2>"$tmp"; then
+    cat "$tmp"
+    rm -f "$tmp"
+    return 0
+  fi
+  rm -f "$tmp"
+  return 1
+}
+
+tui_menu() {
+  local title="$1"
+  local prompt="$2"
+  shift 2
+  local tmp
+  tmp="$(mktemp -t beammeup-dialog.XXXXXX)"
+  if dialog --clear \
+    --backtitle "beammeup v${BEAMMEUP_VERSION}" \
+    --title "$title" \
+    --menu "$prompt" 20 90 10 "$@" 2>"$tmp"; then
+    cat "$tmp"
+    rm -f "$tmp"
+    return 0
+  fi
+  rm -f "$tmp"
+  return 1
+}
+
+tui_yesno() {
+  local title="$1"
+  local prompt="$2"
+  local default_answer="$3"
+  local default_flag=()
+  if [[ "$default_answer" =~ ^[Nn]$ ]]; then
+    default_flag+=(--defaultno)
+  fi
+  dialog --clear \
+    --backtitle "beammeup v${BEAMMEUP_VERSION}" \
+    --title "$title" \
+    "${default_flag[@]}" \
+    --yesno "$prompt" 10 80
+}
+
+tui_msg() {
+  local title="$1"
+  local message="$2"
+  dialog --clear \
+    --backtitle "beammeup v${BEAMMEUP_VERSION}" \
+    --title "$title" \
+    --msgbox "$message" 12 80
+}
+
 print_help() {
   cat <<'HELP'
 beammeup: manage HTTP/SOCKS5 proxy setups on a VPS via SSH.
@@ -45,10 +128,11 @@ Options:
   --ssh-password <password>     SSH password (discouraged on shared shells)
   --protocol <http|socks5>      Target protocol for show/configure actions
   --proxy-port <port>           Proxy port for configure/preflight
-  --action <show|configure|rotate>
+  --action <show|configure|rotate|destroy>
                                 show: display current setup
                                 configure: install/update setup (keep creds)
                                 rotate: install/update and rotate credentials
+                                destroy: destroy hangar (remove beammeup server config)
   --show-inventory              List detected beammeup setups and exit
   --preflight-only              Run checks only, make no remote changes
   --no-firewall-change          Do not add firewall rules on the VPS
@@ -95,11 +179,14 @@ normalize_action() {
   local value
   value="$(to_lower "$1")"
   case "$value" in
-    show|configure|rotate)
+    show|configure|rotate|destroy)
       printf '%s' "$value"
       ;;
     install)
       printf 'configure'
+      ;;
+    uninstall)
+      printf 'destroy'
       ;;
     *)
       return 1
@@ -111,7 +198,12 @@ prompt_required() {
   local label="$1"
   local input=""
   while [[ -z "$input" ]]; do
-    read -r -p "$label: " input
+    if [[ "$USE_TUI" -eq 1 ]]; then
+      require_tui
+      input="$(tui_input "beammeup" "$label" "")" || die "Cancelled."
+    else
+      read -r -p "$label: " input
+    fi
   done
   printf '%s' "$input"
 }
@@ -120,10 +212,15 @@ prompt_with_default() {
   local label="$1"
   local default_value="$2"
   local input
-  if [[ -n "$default_value" ]]; then
-    read -r -p "$label [$default_value]: " input
+  if [[ "$USE_TUI" -eq 1 ]]; then
+    require_tui
+    input="$(tui_input "beammeup" "$label" "$default_value")" || die "Cancelled."
   else
-    read -r -p "$label: " input
+    if [[ -n "$default_value" ]]; then
+      read -r -p "$label [$default_value]: " input
+    else
+      read -r -p "$label: " input
+    fi
   fi
   if [[ -z "$input" ]]; then
     printf '%s' "$default_value"
@@ -247,6 +344,28 @@ prompt_protocol_choice() {
   local prompt_default_label="1"
   local choice
 
+  if [[ "$USE_TUI" -eq 1 ]]; then
+    require_tui
+    if [[ "$default_protocol" == "socks5" ]]; then
+      choice="2"
+    else
+      choice="1"
+    fi
+    choice="$(
+      tui_menu \
+        "transport protocol" \
+        "choose transport protocol:" \
+        "1" "HTTP (recommended for Chrome extension auth)" \
+        "2" "SOCKS5"
+    )" || die "Cancelled."
+    case "$choice" in
+      1) printf 'http' ;;
+      2) printf 'socks5' ;;
+      *) die "Invalid protocol choice." ;;
+    esac
+    return
+  fi
+
   if [[ "$default_protocol" == "socks5" ]]; then
     prompt_default_label="2"
   fi
@@ -277,6 +396,14 @@ prompt_yes_no_default() {
   local prompt="$1"
   local default_answer="$2"
   local answer
+
+  if [[ "$USE_TUI" -eq 1 ]]; then
+    require_tui
+    if tui_yesno "confirmation" "$prompt" "$default_answer"; then
+      return 0
+    fi
+    return 1
+  fi
 
   read -r -p "$prompt [$default_answer]: " answer
   case "${answer:-$default_answer}" in
@@ -341,6 +468,21 @@ choose_existing_ship() {
     return 1
   fi
 
+  if [[ "$USE_TUI" -eq 1 ]]; then
+    require_tui
+    local options=()
+    for index in "${!ships[@]}"; do
+      options+=("${ships[$index]}" "saved ship profile")
+    done
+    options+=("new" "create a new ship")
+    choice="$(tui_menu "ships" "select a ship to launch" "${options[@]}")" || die "Cancelled."
+    if [[ "$choice" == "new" ]]; then
+      return 1
+    fi
+    printf '%s' "$choice"
+    return 0
+  fi
+
   printf '\nSaved ships:\n' >&2
   for index in "${!ships[@]}"; do
     printf '  %d) %s\n' "$((index + 1))" "${ships[$index]}" >&2
@@ -361,55 +503,188 @@ choose_existing_ship() {
   done
 }
 
+pick_ship_for_abandon() {
+  local ships=()
+  local index
+  local options=()
+  mapfile -t ships < <(list_ship_names)
+  if [[ "${#ships[@]}" -eq 0 ]]; then
+    return 1
+  fi
+
+  if [[ "$USE_TUI" -eq 1 ]]; then
+    require_tui
+    for index in "${!ships[@]}"; do
+      options+=("${ships[$index]}" "delete local profile")
+    done
+    tui_menu "abandon ship" "select local ship profile to delete" "${options[@]}"
+    return $?
+  fi
+
+  printf '\nSaved ships:\n' >&2
+  for index in "${!ships[@]}"; do
+    printf '  %d) %s\n' "$((index + 1))" "${ships[$index]}" >&2
+  done
+  printf '  n) cancel\n' >&2
+
+  while true; do
+    read -r -p "Select ship [1-${#ships[@]} or n]: " index
+    if [[ "${index,,}" == "n" ]]; then
+      return 1
+    fi
+    if [[ "$index" =~ ^[0-9]+$ ]] && (( index >= 1 && index <= ${#ships[@]} )); then
+      printf '%s' "${ships[$((index - 1))]}"
+      return 0
+    fi
+    printf 'Please pick a valid ship.\n' >&2
+  done
+}
+
+abandon_ship_local() {
+  local victim="$1"
+  local ship_file
+  ship_file="$(ship_file_path "$victim")"
+  [[ -f "$ship_file" ]] || return 0
+  rm -f "$ship_file"
+}
+
 interactive_ship_wizard() {
   local selected_ship=""
   local raw_ship_name=""
+  local deck_action=""
+  local victim_ship=""
 
   ensure_ships_dir
-  printf '\n'
-  printf '[beammeup] welcome aboard beammeup v%s\n' "$BEAMMEUP_VERSION"
-  printf '[beammeup] ships are saved in %s\n' "$SHIPS_DIR"
-  printf '[beammeup] ship files store host/protocol details, never SSH passwords.\n'
+  require_tui
+  tui_msg "welcome aboard" "beammeup v${BEAMMEUP_VERSION}\n\nships are saved in:\n${SHIPS_DIR}\n\nship files store host/protocol details, never ssh passwords."
 
-  if selected_ship="$(choose_existing_ship)"; then
-    SHIP_NAME="$selected_ship"
-    apply_ship_profile "$SHIP_NAME"
-    info "loaded ship '$SHIP_NAME'"
-    if prompt_yes_no_default "Edit this ship before launch?" "n"; then
-      collect_ship_fields
-      persist_ship_profile "$SHIP_NAME"
-      info "ship '$SHIP_NAME' updated"
+  while true; do
+    if [[ -n "$(list_ship_names || true)" ]]; then
+      deck_action="$(
+        tui_menu \
+          "command deck" \
+          "choose an action" \
+          "launch" "launch using a saved ship" \
+          "new" "create a new ship" \
+          "abandon" "abandon ship (delete local .ship)" \
+          "exit" "exit beammeup"
+      )" || die "Cancelled."
+    else
+      deck_action="new"
     fi
+
+    case "$deck_action" in
+      launch)
+        selected_ship="$(choose_existing_ship)" || continue
+        SHIP_NAME="$selected_ship"
+        apply_ship_profile "$SHIP_NAME"
+        if prompt_yes_no_default "Edit this ship before launch?" "n"; then
+          collect_ship_fields
+          persist_ship_profile "$SHIP_NAME"
+        fi
+        return
+        ;;
+      new)
+        while true; do
+          raw_ship_name="$(prompt_required "Name your ship")"
+          SHIP_NAME="$(sanitize_ship_name "$raw_ship_name")"
+          if [[ -z "$SHIP_NAME" ]]; then
+            tui_msg "invalid name" "Ship name must include letters or numbers."
+            continue
+          fi
+          if [[ -f "$(ship_file_path "$SHIP_NAME")" ]]; then
+            if prompt_yes_no_default "Ship '$SHIP_NAME' exists. Overwrite?" "n"; then
+              break
+            fi
+            continue
+          fi
+          break
+        done
+
+        HOST=""
+        SSH_PORT="$DEFAULT_SSH_PORT"
+        SSH_USER="$DEFAULT_SSH_USER"
+        PROTOCOL="http"
+        PROXY_PORT="$DEFAULT_HTTP_PORT"
+        NO_FIREWALL_CHANGE=0
+        collect_ship_fields
+        persist_ship_profile "$SHIP_NAME"
+        return
+        ;;
+      abandon)
+        victim_ship="$(pick_ship_for_abandon || true)"
+        if [[ -z "$victim_ship" ]]; then
+          tui_msg "abandon ship" "No ships available to abandon."
+          continue
+        fi
+        if prompt_yes_no_default "Abandon ship '$victim_ship'? This deletes local profile only." "n"; then
+          abandon_ship_local "$victim_ship"
+          tui_msg "ship abandoned" "Local ship '$victim_ship' deleted."
+        fi
+        ;;
+      exit)
+        die "Cancelled."
+        ;;
+      *)
+        die "Unknown wizard action: $deck_action"
+        ;;
+    esac
+  done
+}
+
+prompt_action_choice() {
+  local protocol="$1"
+  local protocol_label
+  local choice
+  protocol_label="$( [[ "$protocol" == "http" ]] && echo "HTTP" || echo "SOCKS5" )"
+
+  if [[ "$USE_TUI" -eq 1 ]]; then
+    choice="$(
+      tui_menu \
+        "mission action (${protocol_label})" \
+        "choose action for ${protocol_label}" \
+        "show" "show current setup" \
+        "configure" "configure/repair (keep credentials)" \
+        "rotate" "rotate credentials and configure" \
+        "destroy" "destroy hangar (remove server beammeup config)"
+    )" || die "Cancelled."
+    printf '%s' "$choice"
     return
   fi
 
+  printf '\nCommand options for %s:\n' "$protocol_label"
+  printf '  1) Show current setup\n'
+  printf '  2) Configure/repair (keep credentials)\n'
+  printf '  3) Rotate credentials and configure\n'
+  printf '  4) Destroy hangar (remove server beammeup config)\n'
   while true; do
-    raw_ship_name="$(prompt_required "Name your ship")"
-    SHIP_NAME="$(sanitize_ship_name "$raw_ship_name")"
-    if [[ -z "$SHIP_NAME" ]]; then
-      printf 'Ship name must include letters or numbers.\n'
-      continue
-    fi
-    if [[ -f "$(ship_file_path "$SHIP_NAME")" ]]; then
-      printf "Ship '%s' already exists.\n" "$SHIP_NAME"
-      if prompt_yes_no_default "Overwrite this ship?" "n"; then
-        break
-      fi
-      continue
-    fi
-    break
+    read -r -p "Selection [1-4]: " choice
+    case "$choice" in
+      1) printf 'show'; return ;;
+      2) printf 'configure'; return ;;
+      3) printf 'rotate'; return ;;
+      4) printf 'destroy'; return ;;
+      *) printf 'Please choose 1, 2, 3, or 4.\n' ;;
+    esac
   done
+}
 
-  HOST=""
-  SSH_PORT="$DEFAULT_SSH_PORT"
-  SSH_USER="$DEFAULT_SSH_USER"
-  PROTOCOL="http"
-  PROXY_PORT="$DEFAULT_HTTP_PORT"
-  NO_FIREWALL_CHANGE=0
+confirm_destroy_hangar() {
+  local confirm_text=""
+  if [[ "$USE_TUI" -eq 1 ]]; then
+    if ! prompt_yes_no_default "Destroy hangar on ${HOST}? This removes beammeup server config." "n"; then
+      return 1
+    fi
+    confirm_text="$(tui_input "confirm destroy" "Type DESTROY to confirm" "")" || return 1
+  else
+    printf '\nDestroy hangar will remove beammeup server config on %s.\n' "$HOST"
+    if ! prompt_yes_no_default "Continue?" "n"; then
+      return 1
+    fi
+    read -r -p "Type DESTROY to confirm: " confirm_text
+  fi
 
-  collect_ship_fields
-  persist_ship_profile "$SHIP_NAME"
-  info "ship '$SHIP_NAME' ready for launch"
+  [[ "$confirm_text" == "DESTROY" ]]
 }
 
 resolve_install_target() {
@@ -675,6 +950,10 @@ if [[ "$LIST_SHIPS" -eq 1 ]]; then
   exit 0
 fi
 
+if [[ -t 0 && -t 1 ]]; then
+  USE_TUI=1
+fi
+
 if [[ -n "$SHIP_NAME" ]]; then
   SHIP_NAME="$(sanitize_ship_name "$SHIP_NAME")"
   [[ -n "$SHIP_NAME" ]] || die "Invalid --ship name."
@@ -699,7 +978,7 @@ fi
 
 if [[ -n "$ACTION" ]]; then
   ACTION="$(normalize_action "$ACTION" 2>/dev/null || true)"
-  [[ -n "$ACTION" ]] || die "Invalid --action. Use show, configure, or rotate."
+  [[ -n "$ACTION" ]] || die "Invalid --action. Use show, configure, rotate, or destroy."
 fi
 
 if [[ -n "$PROXY_PORT" ]]; then
@@ -715,8 +994,12 @@ if [[ "$PREFLIGHT_ONLY" -eq 1 ]]; then
 fi
 
 if [[ -z "$SSH_PASSWORD" ]]; then
-  read -r -s -p "SSH password for ${SSH_USER}@${HOST}: " SSH_PASSWORD
-  printf '\n'
+  if [[ "$USE_TUI" -eq 1 ]]; then
+    SSH_PASSWORD="$(tui_password "ssh credentials" "SSH password for ${SSH_USER}@${HOST}")" || die "Cancelled."
+  else
+    read -r -s -p "SSH password for ${SSH_USER}@${HOST}: " SSH_PASSWORD
+    printf '\n'
+  fi
 fi
 
 [[ -n "$SSH_PASSWORD" ]] || die "SSH password is required for this MVP."
@@ -914,6 +1197,20 @@ apply_firewall_rule() {
   fi
 
   FIREWALL_NOTE="Firewall not modified. Open TCP ${port} manually if blocked."
+}
+
+cleanup_firewall_rule() {
+  local port="$1"
+  [[ -n "$port" ]] || return 0
+  is_valid_port "$port" || return 0
+
+  if command -v ufw >/dev/null 2>&1; then
+    local ufw_state
+    ufw_state="$(ufw status 2>/dev/null | head -n 1 || true)"
+    if [[ "$ufw_state" == "Status: active" ]]; then
+      ufw delete allow "${port}/tcp" >/dev/null 2>&1 || true
+    fi
+  fi
 }
 
 BEAM_DIR="/etc/beammeup"
@@ -1275,6 +1572,59 @@ show_setup() {
   emit_result "HTTP" "${HTTP_PORT:-}" "${HTTP_USER:-}" "${HTTP_PASS:-}" "show" "$note"
 }
 
+destroy_hangar() {
+  ensure_requirements
+  load_socks_state
+  load_http_state
+
+  local removed_any=0
+  local note_parts=()
+
+  FIREWALL_NOTE=""
+
+  if [[ "$SOCKS_EXISTS" == "1" ]]; then
+    if service_defined "$SOCKS_SERVICE"; then
+      systemctl disable --now "$SOCKS_SERVICE" >/dev/null 2>&1 || true
+    fi
+    cleanup_firewall_rule "${SOCKS_PORT:-}"
+    rm -f "$SOCKS_ENV" "$SOCKS_SERVICE_FILE"
+    removed_any=1
+    note_parts+=("SOCKS5 removed")
+  fi
+
+  if [[ "$HTTP_EXISTS" == "1" ]]; then
+    cleanup_firewall_rule "${HTTP_PORT:-}"
+
+    if service_defined "squid.service"; then
+      systemctl disable --now squid >/dev/null 2>&1 || true
+    fi
+
+    rm -f "$HTTP_ENV" "$HTTP_HTPASSWD"
+
+    if [[ -f "$SQUID_BACKUP" ]]; then
+      cp "$SQUID_BACKUP" "$SQUID_CONF"
+      note_parts+=("restored squid backup")
+      if service_defined "squid.service"; then
+        systemctl enable --now squid >/dev/null 2>&1 || true
+      fi
+    elif [[ -f "$SQUID_CONF" ]] && (grep -q "managed by beammeup" "$SQUID_CONF" || grep -q "beammeup-proxy" "$SQUID_CONF"); then
+      rm -f "$SQUID_CONF"
+      note_parts+=("removed beammeup squid config")
+    fi
+
+    removed_any=1
+    note_parts+=("HTTP removed")
+  fi
+
+  systemctl daemon-reload
+
+  if [[ "$removed_any" -eq 1 ]]; then
+    emit_result "DESTROY" "$(get_public_ip)" "" "" "destroyed" "${note_parts[*]}"
+  else
+    emit_result "DESTROY" "$(get_public_ip)" "" "" "destroy-noop" "No beammeup configuration detected."
+  fi
+}
+
 MODE="inventory"
 PROTOCOL=""
 PROXY_PORT=""
@@ -1320,6 +1670,9 @@ case "$MODE" in
   show)
     [[ "$PROTOCOL" == "http" || "$PROTOCOL" == "socks5" ]] || die "--protocol is required for show mode."
     show_setup
+    ;;
+  destroy)
+    destroy_hangar
     ;;
   apply)
     [[ "$PROTOCOL" == "http" || "$PROTOCOL" == "socks5" ]] || die "--protocol is required for apply mode."
@@ -1389,14 +1742,9 @@ printf '  Host: %s\n' "$HOST"
 printf '  SSH:  %s@%s:%s\n' "$SSH_USER" "$HOST" "$SSH_PORT"
 printf '\n'
 if [[ "$AUTO_YES" -ne 1 ]]; then
-  read -r -p "Continue? [Y/n]: " proceed
-  case "${proceed:-Y}" in
-    Y|y|yes|YES)
-      ;;
-    *)
-      die "Cancelled."
-      ;;
-  esac
+  if ! prompt_yes_no_default "Continue mission to ${HOST}?" "Y"; then
+    die "Cancelled."
+  fi
 fi
 
 phase 2 4 "upload remote command deck"
@@ -1422,7 +1770,7 @@ if [[ "$SHOW_INVENTORY" -eq 1 ]]; then
   exit 0
 fi
 
-if [[ -z "$PROTOCOL" ]]; then
+if [[ -z "$PROTOCOL" && "$ACTION" != "destroy" ]]; then
   if [[ "$AUTO_YES" -eq 1 ]]; then
     if [[ "$HTTP_EXISTS" == "1" ]]; then
       PROTOCOL="http"
@@ -1432,25 +1780,7 @@ if [[ -z "$PROTOCOL" ]]; then
       PROTOCOL="http"
     fi
   else
-    printf '\nChoose transport protocol:\n'
-    printf '  1) HTTP (recommended for Chrome extension auth)\n'
-    printf '  2) SOCKS5\n'
-    while true; do
-      read -r -p "Selection [1-2]: " protocol_choice
-      case "$protocol_choice" in
-        1)
-          PROTOCOL="http"
-          break
-          ;;
-        2)
-          PROTOCOL="socks5"
-          break
-          ;;
-        *)
-          printf 'Please choose 1 or 2.\n'
-          ;;
-      esac
-    done
+    PROTOCOL="$(prompt_protocol_choice "http")"
   fi
 fi
 
@@ -1461,7 +1791,7 @@ if [[ "$PROTOCOL" == "http" ]]; then
     SELECTED_EXISTS=1
   fi
   SELECTED_PORT="$HTTP_PORT_CURRENT"
-else
+elif [[ "$PROTOCOL" == "socks5" ]]; then
   if [[ "$SOCKS_EXISTS" == "1" ]]; then
     SELECTED_EXISTS=1
   fi
@@ -1476,33 +1806,10 @@ if [[ -z "$ACTION" ]]; then
   if [[ "$AUTO_YES" -eq 1 ]]; then
     ACTION="configure"
   else
-    if [[ "$SELECTED_EXISTS" == "1" ]]; then
-      printf '\nCommand options for %s:\n' "$( [[ "$PROTOCOL" == "http" ]] && echo HTTP || echo SOCKS5 )"
-      printf '  1) Show current setup\n'
-      printf '  2) Configure/repair (keep credentials)\n'
-      printf '  3) Rotate credentials and configure\n'
-      while true; do
-        read -r -p "Selection [1-3]: " action_choice
-        case "$action_choice" in
-          1)
-            ACTION="show"
-            break
-            ;;
-          2)
-            ACTION="configure"
-            break
-            ;;
-          3)
-            ACTION="rotate"
-            break
-            ;;
-          *)
-            printf 'Please choose 1, 2, or 3.\n'
-            ;;
-        esac
-      done
+    if [[ -n "$PROTOCOL" ]]; then
+      ACTION="$(prompt_action_choice "$PROTOCOL")"
     else
-      ACTION="configure"
+      ACTION="destroy"
     fi
   fi
 fi
@@ -1512,12 +1819,25 @@ if [[ "$ACTION" == "rotate" ]]; then
   ACTION="configure"
 fi
 
+if [[ "$ACTION" == "destroy" ]]; then
+  if [[ "$PREFLIGHT_ONLY" -eq 1 ]]; then
+    run_ssh "rm -f $REMOTE_SCRIPT_PATH" >/dev/null 2>&1 || true
+    die "Preflight mode cannot be used with destroy action."
+  fi
+  if [[ "$AUTO_YES" -eq 0 ]]; then
+    if ! confirm_destroy_hangar; then
+      run_ssh "rm -f $REMOTE_SCRIPT_PATH" >/dev/null 2>&1 || true
+      die "Cancelled."
+    fi
+  fi
+fi
+
 if [[ "$ACTION" == "show" && "$PREFLIGHT_ONLY" -eq 1 ]]; then
   run_ssh "rm -f $REMOTE_SCRIPT_PATH" >/dev/null 2>&1 || true
   die "Preflight mode cannot be used with show action."
 fi
 
-if [[ "$ACTION" != "show" ]]; then
+if [[ "$ACTION" != "show" && "$ACTION" != "destroy" ]]; then
   if [[ -z "$PROXY_PORT" ]]; then
     if [[ -n "$SELECTED_PORT" ]]; then
       PROXY_PORT="$SELECTED_PORT"
@@ -1547,6 +1867,8 @@ fi
 REMOTE_MODE=""
 if [[ "$ACTION" == "show" ]]; then
   REMOTE_MODE="show"
+elif [[ "$ACTION" == "destroy" ]]; then
+  REMOTE_MODE="destroy"
 elif [[ "$PREFLIGHT_ONLY" -eq 1 ]]; then
   REMOTE_MODE="preflight"
 else
@@ -1586,6 +1908,16 @@ RESULT_NOTE="$(extract_value "BM_RESULT_NOTE" "$RESULT_OUTPUT" || true)"
 
 if [[ -z "$RESULT_HOST" || "$RESULT_HOST" == "UNKNOWN" ]]; then
   RESULT_HOST="$HOST"
+fi
+
+if [[ "$RESULT_PROTOCOL" == "DESTROY" ]]; then
+  printf '\n[beammeup] destroy hangar complete.\n'
+  printf '  Target: %s\n' "$RESULT_HOST"
+  if [[ -n "$RESULT_NOTE" ]]; then
+    printf '  Result: %s\n' "$RESULT_NOTE"
+  fi
+  printf '\n[beammeup] jump successful.\n'
+  exit 0
 fi
 
 printf '\n'

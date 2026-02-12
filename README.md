@@ -11,6 +11,7 @@ a local install-only cli that:
 - supports inventory, show, configure/repair, rotate credentials, and preflight checks
 - stores reusable ship profiles in `~/.beammeup/ships/*.ship`
 - never stores ssh passwords in ship files
+- runs a full `dialog`-based tui wizard for interactive use
 
 ### what are ships?
 
@@ -35,6 +36,10 @@ beammeup
 beammeup runs on your machine and sshes into your vps. it configures proxy services remotely. 
 
 there is no hosted control plane. no `scotty`. install-only.
+
+wizard terminology:
+- `destroy hangar`: remove beammeup configuration from the server
+- `abandon ship`: delete local `.ship` profile only
 
 ## supported targets
 

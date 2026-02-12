@@ -9,11 +9,11 @@ set -euo pipefail
 # Optional env vars:
 #   BEAMMEUP_BASE_URL    (default: https://beammeup.pw)
 #   BEAMMEUP_INSTALL_DIR (default: $HOME/.local/bin)
-#   BEAMMEUP_VERSION     (default: 1.3.1)
+#   BEAMMEUP_VERSION     (default: 1.4.0)
 
 BASE_URL="${BEAMMEUP_BASE_URL:-https://beammeup.pw}"
 INSTALL_DIR="${BEAMMEUP_INSTALL_DIR:-$HOME/.local/bin}"
-VERSION="${BEAMMEUP_VERSION:-1.3.1}"
+VERSION="${BEAMMEUP_VERSION:-1.4.0}"
 TARGET="${INSTALL_DIR}/beammeup"
 SOURCE_URL="${BASE_URL%/}/beammeup"
 
@@ -48,6 +48,7 @@ chmod +x "$TARGET"
 
 info "transport complete"
 info "installed to ${TARGET}"
+info "interactive mode requires: dialog"
 
 case ":$PATH:" in
   *":${INSTALL_DIR}:"*)
