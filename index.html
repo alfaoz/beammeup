@@ -1,397 +1,250 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>beammeup — proxy setup for people who have better things to do</title>
-<meta name="description" content="One command to install. HTTP sidecar or SOCKS5 proxy on your VPS. Ships + hangars. No config spelunking.">
-<style>
-  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap');
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>beammeup</title>
+  <meta name="description" content="One command. Your own VPS proxy exit (HTTP sidecar or SOCKS5). Ships + hangars.">
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap');
 
-  * { margin: 0; padding: 0; box-sizing: border-box; }
+    :root {
+      --bg: rgb(5, 5, 5);
+      --panel: #0b0b0b;
+      --line: #1f1f1f;
+      --text: #bdbdbd;
+      --muted: #6e6e6e;
+      --bright: #e6e6e6;
+      --accent: #00d4aa;
+      --danger: #ff5f56;
+      --yellow: #ffbd2e;
+      --green: #27c93f;
+    }
 
-  :root {
-    --bg: #0a0a0a;
-    --fg: #b0b0b0;
-    --bright: #e0e0e0;
-    --dim: #505050;
-    --accent: #00d4aa;
-    --accent-dim: #00d4aa44;
-    --red: #ff5f56;
-    --yellow: #ffbd2e;
-    --green: #27c93f;
-  }
+    * { box-sizing: border-box; }
 
-  html {
-    background: var(--bg);
-    color: var(--fg);
-    font-family: 'JetBrains Mono', 'Courier New', monospace;
-    font-size: 15px;
-    line-height: 1.7;
-    -webkit-font-smoothing: antialiased;
-  }
+    html, body {
+      height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: "JetBrains Mono", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      -webkit-font-smoothing: antialiased;
+      overflow: hidden;
+    }
 
-  body {
-    max-width: 720px;
-    margin: 0 auto;
-    padding: 3rem 1.5rem 6rem;
-  }
+    body {
+      margin: 0;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+    }
 
-  ::selection {
-    background: var(--accent);
-    color: var(--bg);
-  }
+    .frame {
+      width: min(920px, 100%);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent 35%), var(--panel);
+      box-shadow: 0 0 0 1px rgba(0,0,0,0.65), 0 24px 80px rgba(0,0,0,0.55);
+      overflow: hidden;
+    }
 
-  a {
-    color: var(--accent);
-    text-decoration: none;
-  }
-  a:hover {
-    text-decoration: underline;
-  }
+    .bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.02);
+      font-size: 12px;
+      color: var(--muted);
+    }
 
-  .header {
-    margin-bottom: 3rem;
-  }
+    .lights {
+      display: inline-flex;
+      gap: 6px;
+      align-items: center;
+    }
 
-  .title {
-    color: var(--bright);
-    font-size: 1.6rem;
-    font-weight: 700;
-    letter-spacing: -0.02em;
-  }
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+    }
 
-  .title .accent { color: var(--accent); }
+    .dot.r { background: var(--danger); }
+    .dot.y { background: var(--yellow); }
+    .dot.g { background: var(--green); }
 
-  .tagline {
-    color: var(--dim);
-    margin-top: 0.25rem;
-    font-size: 0.85rem;
-  }
+    .content {
+      padding: 18px 16px 16px;
+    }
 
-  .version {
-    display: inline-block;
-    color: var(--dim);
-    font-size: 0.75rem;
-    border: 1px solid var(--dim);
-    padding: 0.1rem 0.4rem;
-    border-radius: 3px;
-    margin-left: 0.5rem;
-    vertical-align: middle;
-    position: relative;
-    top: -2px;
-  }
+    .logo {
+      margin: 0;
+      white-space: pre;
+      color: var(--bright);
+      font-size: 12px;
+      line-height: 1.15;
+      overflow: hidden;
+    }
 
-  .install-block {
-    margin: 2.5rem 0;
-    background: #111;
-    border: 1px solid #222;
-    border-radius: 6px;
-    overflow: hidden;
-  }
+    .tagline {
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.5;
+    }
 
-  .install-bar {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 0.5rem 0.9rem;
-    background: #181818;
-    border-bottom: 1px solid #222;
-    font-size: 0.75rem;
-    color: var(--dim);
-  }
+    .tagline a { color: var(--accent); text-decoration: none; }
+    .tagline a:hover { text-decoration: underline; }
 
-  .dots {
-    display: flex;
-    gap: 6px;
-  }
-  .dots span {
-    width: 10px;
-    height: 10px;
-    border-radius: 50%;
-    display: block;
-  }
-  .dots .r { background: var(--red); }
-  .dots .y { background: var(--yellow); }
-  .dots .g { background: var(--green); }
+    .cmd {
+      margin-top: 14px;
+      border: 1px dashed var(--line);
+      border-radius: 9px;
+      padding: 12px 12px;
+      background: rgba(0,0,0,0.35);
+      cursor: pointer;
+      user-select: none;
+      position: relative;
+    }
 
-  .install-cmd {
-    padding: 1.2rem 1rem;
-    font-size: 0.92rem;
-    overflow-x: auto;
-    white-space: nowrap;
-    cursor: pointer;
-    position: relative;
-    transition: background 0.15s;
-  }
+    .cmd:hover { border-color: rgba(0, 212, 170, 0.35); }
 
-  .install-cmd:hover {
-    background: #161616;
-  }
+    .cmd code {
+      display: block;
+      white-space: nowrap;
+      overflow-x: auto;
+      font-size: 13px;
+      color: var(--bright);
+    }
 
-  .install-cmd .prompt { color: var(--accent); user-select: none; }
-  .install-cmd .cmd { color: var(--bright); }
+    .cmd .hint {
+      margin-top: 8px;
+      font-size: 12px;
+      color: var(--muted);
+    }
 
-  .copy-toast {
-    position: absolute;
-    right: 1rem;
-    top: 50%;
-    transform: translateY(-50%);
-    color: var(--accent);
-    font-size: 0.75rem;
-    opacity: 0;
-    transition: opacity 0.2s;
-    pointer-events: none;
-  }
-  .copy-toast.show { opacity: 1; }
+    .cmd .hint b { color: var(--accent); font-weight: 700; }
 
-  .section {
-    margin: 2.5rem 0;
-  }
+    .toast {
+      position: absolute;
+      right: 12px;
+      top: 12px;
+      font-size: 12px;
+      color: var(--accent);
+      opacity: 0;
+      transition: opacity 150ms ease;
+      pointer-events: none;
+    }
 
-  .section-title {
-    color: var(--dim);
-    font-size: 0.75rem;
-    text-transform: uppercase;
-    letter-spacing: 0.1em;
-    margin-bottom: 0.8rem;
-  }
+    .toast.show { opacity: 1; }
 
-  .section-title::before {
-    content: '# ';
-    color: var(--accent-dim);
-  }
+    .footer {
+      margin-top: 14px;
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+      font-size: 12px;
+      color: var(--muted);
+    }
 
-  p {
-    margin-bottom: 0.8rem;
-  }
+    .footer a { color: var(--accent); text-decoration: none; }
+    .footer a:hover { text-decoration: underline; }
 
-  .bright { color: var(--bright); }
-  .accent { color: var(--accent); }
-  .dim { color: var(--dim); }
+    @media (max-width: 560px) {
+      .logo { font-size: 9px; }
+      .tagline { font-size: 12px; }
+      .cmd code { font-size: 12px; }
+    }
 
-  .feature-list {
-    list-style: none;
-    padding: 0;
-  }
-
-  .feature-list li {
-    padding: 0.15rem 0;
-  }
-
-  .feature-list li::before {
-    content: '→ ';
-    color: var(--accent);
-  }
-
-  code {
-    background: #181818;
-    padding: 0.15rem 0.4rem;
-    border-radius: 3px;
-    font-size: 0.88em;
-    color: var(--bright);
-  }
-
-  .cmd-grid {
-    display: grid;
-    gap: 0.15rem;
-  }
-
-  .cmd-row {
-    display: flex;
-    gap: 1rem;
-  }
-
-  .cmd-name {
-    color: var(--bright);
-    min-width: 12ch;
-    flex-shrink: 0;
-  }
-
-  .cmd-desc {
-    color: var(--dim);
-  }
-
-  hr {
-    border: none;
-    border-top: 1px solid #1a1a1a;
-    margin: 2.5rem 0;
-  }
-
-  .footer {
-    margin-top: 4rem;
-    color: var(--dim);
-    font-size: 0.8rem;
-  }
-
-  .footer .note {
-    font-size: 0.75rem;
-    margin-top: 0.5rem;
-  }
-
-  .cursor {
-    display: inline-block;
-    width: 8px;
-    height: 1.1em;
-    background: var(--accent);
-    vertical-align: text-bottom;
-    animation: blink 1s steps(1) infinite;
-    margin-left: 2px;
-  }
-
-  @keyframes blink {
-    50% { opacity: 0; }
-  }
-
-  .fade-in {
-    opacity: 0;
-    transform: translateY(6px);
-    animation: fadeUp 0.5s ease forwards;
-  }
-
-  @keyframes fadeUp {
-    to { opacity: 1; transform: translateY(0); }
-  }
-
-  .fade-in:nth-child(1) { animation-delay: 0s; }
-  .fade-in:nth-child(2) { animation-delay: 0.08s; }
-  .fade-in:nth-child(3) { animation-delay: 0.16s; }
-  .fade-in:nth-child(4) { animation-delay: 0.24s; }
-  .fade-in:nth-child(5) { animation-delay: 0.32s; }
-  .fade-in:nth-child(6) { animation-delay: 0.40s; }
-  .fade-in:nth-child(7) { animation-delay: 0.48s; }
-  .fade-in:nth-child(8) { animation-delay: 0.56s; }
-  .fade-in:nth-child(9) { animation-delay: 0.64s; }
-  .fade-in:nth-child(10) { animation-delay: 0.72s; }
-  .fade-in:nth-child(11) { animation-delay: 0.80s; }
-
-  @media (max-width: 520px) {
-    html { font-size: 13.5px; }
-    body { padding: 2rem 1rem 4rem; }
-    .cmd-row { flex-direction: column; gap: 0; }
-    .cmd-desc { padding-left: 2ch; }
-  }
-</style>
+    @media (max-height: 560px) {
+      .logo { font-size: 10px; }
+      .tagline { margin-top: 6px; }
+      .cmd { margin-top: 10px; }
+    }
+  </style>
 </head>
 <body>
-
-<div class="header fade-in">
-  <div class="title">
-    <span class="accent">▲</span> beammeup<span class="version">v2</span>
-  </div>
-  <div class="tagline">proxy setup for people who have better things to do</div>
-</div>
-
-<div class="install-block fade-in" id="installBlock">
-  <div class="install-bar">
-    <div class="dots"><span class="r"></span><span class="y"></span><span class="g"></span></div>
-    <span>click to copy</span>
-  </div>
-  <div class="install-cmd" onclick="copyInstall()">
-    <span class="prompt">$ </span><span class="cmd">curl -fsSL https://beammeup.pw/install.sh | bash</span>
-    <span class="copy-toast" id="toast">copied ✓</span>
-  </div>
-</div>
-
-<div class="section fade-in">
-  <p>one command to install. one <span class="bright">local</span> cockpit to run.</p>
-  <p>HTTP sidecar for chrome auth prompts, SOCKS5 for everything else.</p>
-  <p class="dim" style="font-size: 0.9rem;">installer downloads a prebuilt binary from GitHub releases. your domain hosts the installer and landing page.</p>
-</div>
-
-<hr class="fade-in">
-
-<div class="section fade-in">
-  <div class="section-title">what it does</div>
-  <ul class="feature-list">
-    <li>SSHs into your VPS, installs what's needed, configures everything</li>
-    <li>HTTP proxy <span class="dim">(squid + auth)</span> or SOCKS5 <span class="dim">(microsocks)</span></li>
-    <li><span class="bright">HTTP sidecar</span> mode that won't overwrite an existing squid config</li>
-    <li>auto-generates credentials, rotates them when you want</li>
-    <li>firewall rules handled <span class="dim">(or skipped, your call)</span></li>
-    <li>saved <span class="bright">ships</span> (local profiles) and <span class="bright">hangars</span> (remote setup)</li>
-    <li>destroy hangar to clean up after yourself like a responsible adult</li>
-  </ul>
-</div>
-
-<hr class="fade-in">
-
-<div class="section fade-in">
-  <div class="section-title">quick start</div>
-  <p><span class="bright">1.</span> you need a VPS <span class="dim">(debian/ubuntu, root ssh)</span></p>
-  <p><span class="bright">2.</span> install beammeup with the one-liner above</p>
-  <p><span class="bright">3.</span> run <code>beammeup</code>, create a ship, and launch. that's it.</p>
-</div>
-
-<hr class="fade-in">
-
-<div class="section fade-in">
-  <div class="section-title">actions</div>
-  <div class="cmd-grid">
-    <div class="cmd-row">
-      <span class="cmd-name">show</span>
-      <span class="cmd-desc">display current setup and (when available) credentials</span>
+  <main class="frame" role="main">
+    <div class="bar">
+      <span class="lights" aria-hidden="true">
+        <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+      </span>
+      <span>beammeup.pw</span>
     </div>
-    <div class="cmd-row">
-      <span class="cmd-name">configure</span>
-      <span class="cmd-desc">install or repair <span class="dim">(keeps existing creds)</span></span>
-    </div>
-    <div class="cmd-row">
-      <span class="cmd-name">rotate</span>
-      <span class="cmd-desc">new credentials, who dis</span>
-    </div>
-    <div class="cmd-row">
-      <span class="cmd-name">destroy</span>
-      <span class="cmd-desc">destroy hangar (remove beammeup remote config)</span>
-    </div>
-  </div>
-</div>
 
-<hr class="fade-in">
+    <div class="content">
+<pre class="logo">______                                                                             
+___  /____________ _______ __________ ____________  _________   ___________      __
+__  __ \  _ \  __ `/_  __ `__ \_  __ `__ \  _ \  / / /__  __ \  ___  __ \_ | /| / /
+_  /_/ /  __/ /_/ /_  / / / / /  / / / / /  __/ /_/ /__  /_/ /____  /_/ /_ |/ |/ / 
+/_.___/\___/\__,_/ /_/ /_/ /_//_/ /_/ /_/\___/\__,_/ _  .___/_(_)  .___/____/|__/  
+                                                     /_/        /_/                 </pre>
 
-<div class="section fade-in">
-  <div class="section-title">ships + hangars</div>
-  <p><span class="bright">ship</span> = local profile in <code>~/.beammeup/ships/</code>. it stores host/user/ports and defaults.</p>
-  <p><span class="bright">hangar</span> = the remote services and metadata on that VPS (<code>/etc/beammeup/</code>).</p>
-  <p class="dim" style="font-size: 0.85rem;">ship files never store ssh passwords. beammeup prompts at runtime and caches in-memory per session.</p>
-</div>
+      <p class="tagline">
+        local cockpit that SSHes into your VPS and sets up an authenticated exit.
+        <span class="bright">HTTP sidecar</span> for Chrome auth prompts. <span class="bright">SOCKS5</span> when your client supports it.
+        <a href="https://github.com/alfaoz/beammeup" target="_blank" rel="noreferrer">github</a>
+      </p>
 
-<div class="section fade-in">
-  <div class="section-title">cli usage</div>
-  <div class="cmd-grid">
-    <div class="cmd-row">
-      <span class="cmd-name" style="min-width:28ch"><span class="accent">beammeup</span></span>
-      <span class="cmd-desc">interactive cockpit</span>
-    </div>
-    <div class="cmd-row">
-      <span class="cmd-name" style="min-width:28ch"><span class="accent">beammeup</span> --list-ships</span>
-      <span class="cmd-desc">see what you've got</span>
-    </div>
-    <div class="cmd-row">
-      <span class="cmd-name" style="min-width:28ch"><span class="accent">beammeup</span> --ship istanbul</span>
-      <span class="cmd-desc">open a saved ship</span>
-    </div>
-    <div class="cmd-row">
-      <span class="cmd-name" style="min-width:28ch"><span class="accent">beammeup</span> --self-update</span>
-      <span class="cmd-desc">beam up a fresh release</span>
-    </div>
-  </div>
-</div>
+      <div class="cmd" id="cmd" role="button" tabindex="0" aria-label="Copy install command">
+        <span class="toast" id="toast">copied</span>
+        <code>$ curl -fsSL https://beammeup.pw/install.sh | bash</code>
+        <div class="hint"><b>click</b> to copy, then run <code>beammeup</code></div>
+      </div>
 
-<div class="footer fade-in">
-  <p>target: debian/ubuntu vps with root ssh and systemd.</p>
-  <p class="note">no telemetry. no accounts. no nonsense. just a local tool doing honest work.<span class="cursor"></span></p>
-</div>
+      <div class="footer">
+        <span>supports debian/ubuntu VPS targets (root ssh, systemd)</span>
+        <span>no accounts. no telemetry.</span>
+      </div>
+    </div>
+  </main>
 
-<script>
-function copyInstall() {
-  const cmd = 'curl -fsSL https://beammeup.pw/install.sh | bash';
-  navigator.clipboard.writeText(cmd).then(() => {
-    const toast = document.getElementById('toast');
-    toast.classList.add('show');
-    setTimeout(() => toast.classList.remove('show'), 1500);
-  });
-}
-</script>
+  <script>
+    (function () {
+      var cmd = 'curl -fsSL https://beammeup.pw/install.sh | bash';
+      var box = document.getElementById('cmd');
+      var toast = document.getElementById('toast');
+
+      function showToast() {
+        toast.classList.add('show');
+        window.setTimeout(function () { toast.classList.remove('show'); }, 1200);
+      }
+
+      async function copy() {
+        try {
+          await navigator.clipboard.writeText(cmd);
+          showToast();
+        } catch (e) {
+          // Fallback for older browsers
+          var area = document.createElement('textarea');
+          area.value = cmd;
+          area.style.position = 'fixed';
+          area.style.opacity = '0';
+          document.body.appendChild(area);
+          area.focus();
+          area.select();
+          try {
+            document.execCommand('copy');
+            showToast();
+          } finally {
+            document.body.removeChild(area);
+          }
+        }
+      }
+
+      box.addEventListener('click', copy);
+      box.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          copy();
+        }
+      });
+    })();
+  </script>
 </body>
 </html>
