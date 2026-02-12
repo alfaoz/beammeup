@@ -31,6 +31,9 @@ then:
 beammeup
 ```
 
+installer behavior:
+- installs `dialog` automatically when possible (brew/apt/dnf/yum/pacman/zypper/apk)
+
 ## how it works
 
 beammeup runs on your machine and sshes into your vps. it configures proxy services remotely. 

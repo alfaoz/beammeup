@@ -26,6 +26,49 @@ info() {
   printf '[beammedown] %s\n' "$*"
 }
 
+run_with_privilege() {
+  if [[ "$(id -u)" -eq 0 ]]; then
+    "$@"
+    return $?
+  fi
+  if command -v sudo >/dev/null 2>&1; then
+    sudo "$@"
+    return $?
+  fi
+  return 1
+}
+
+install_dialog() {
+  if command -v dialog >/dev/null 2>&1; then
+    info "dialog already installed"
+    return 0
+  fi
+
+  info "installing dialog for full tui mode..."
+
+  if command -v brew >/dev/null 2>&1; then
+    brew install dialog || die "failed to install dialog with brew. Run: brew install dialog"
+  elif command -v apt-get >/dev/null 2>&1; then
+    run_with_privilege apt-get update || die "failed to run apt-get update. Run manually: sudo apt-get update"
+    run_with_privilege apt-get install -y dialog || die "failed to install dialog. Run manually: sudo apt-get install -y dialog"
+  elif command -v dnf >/dev/null 2>&1; then
+    run_with_privilege dnf install -y dialog || die "failed to install dialog. Run manually: sudo dnf install -y dialog"
+  elif command -v yum >/dev/null 2>&1; then
+    run_with_privilege yum install -y dialog || die "failed to install dialog. Run manually: sudo yum install -y dialog"
+  elif command -v pacman >/dev/null 2>&1; then
+    run_with_privilege pacman -Sy --noconfirm dialog || die "failed to install dialog. Run manually: sudo pacman -Sy --noconfirm dialog"
+  elif command -v zypper >/dev/null 2>&1; then
+    run_with_privilege zypper --non-interactive install dialog || die "failed to install dialog. Run manually: sudo zypper --non-interactive install dialog"
+  elif command -v apk >/dev/null 2>&1; then
+    run_with_privilege apk add dialog || die "failed to install dialog. Run manually: sudo apk add dialog"
+  else
+    die "dialog not found and no supported package manager detected. Install dialog manually, then run beammeup."
+  fi
+
+  command -v dialog >/dev/null 2>&1 || die "dialog install finished but command is still missing."
+  info "dialog ready"
+}
+
 command -v curl >/dev/null 2>&1 || die "curl is required"
 command -v chmod >/dev/null 2>&1 || die "chmod is required"
 
@@ -46,9 +89,10 @@ fi
 mv "$TMP_FILE" "$TARGET"
 chmod +x "$TARGET"
 
+install_dialog
+
 info "transport complete"
 info "installed to ${TARGET}"
-info "interactive mode requires: dialog"
 
 case ":$PATH:" in
   *":${INSTALL_DIR}:"*)
