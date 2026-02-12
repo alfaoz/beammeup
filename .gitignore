@@ -1,0 +1,10 @@
+# build outputs
+dist/
+*.tar.gz
+
+# local binaries
+beammeup-darwin-*
+beammeup-linux-*
+
+# macOS
+.DS_Store

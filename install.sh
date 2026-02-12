@@ -1,162 +1,148 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# beammeup installer
+# beammeup installer (binary release)
 #
 # Usage:
 #   curl -fsSL https://beammeup.pw/install.sh | bash
 #
 # Optional env vars:
-#   BEAMMEUP_BASE_URL    (default: https://beammeup.pw)
+#   BEAMMEUP_REPO        (default: alfaoz/beammeup)
+#   BEAMMEUP_BASE_URL    (default: empty -> GitHub releases)
 #   BEAMMEUP_INSTALL_DIR (default: $HOME/.local/bin)
-#   BEAMMEUP_VERSION     (default: 1.4.3)
+#   BEAMMEUP_VERSION     (default: latest)
 
-BASE_URL="${BEAMMEUP_BASE_URL:-https://beammeup.pw}"
+REPO="${BEAMMEUP_REPO:-alfaoz/beammeup}"
+BASE_URL="${BEAMMEUP_BASE_URL:-}"
 INSTALL_DIR="${BEAMMEUP_INSTALL_DIR:-$HOME/.local/bin}"
-VERSION="${BEAMMEUP_VERSION:-1.4.3}"
-TARGET="${INSTALL_DIR}/beammeup"
-SOURCE_URL="${BASE_URL%/}/beammeup"
+VERSION="${BEAMMEUP_VERSION:-latest}"
+
+info() {
+  printf '[beammedown] %s\n' "$*"
+}
 
 die() {
   printf '[beammedown] ERROR: %s\n' "$*" >&2
   exit 1
 }
 
-info() {
-  printf '[beammedown] %s\n' "$*"
+need_cmd() {
+  command -v "$1" >/dev/null 2>&1 || die "$1 is required"
 }
 
-run_with_privilege() {
-  if [[ "$(id -u)" -eq 0 ]]; then
-    "$@"
-    return $?
-  fi
-  if command -v sudo >/dev/null 2>&1; then
-    sudo "$@"
-    return $?
-  fi
-  return 1
-}
-
-install_gum_binary() {
-  local os_name arch_name latest_tag version tarball url tmp_dir
+detect_platform() {
   local os_raw arch_raw
-
   os_raw="$(uname -s)"
   arch_raw="$(uname -m)"
 
   case "$os_raw" in
-    Linux) os_name="Linux" ;;
-    Darwin) os_name="Darwin" ;;
-    *)
-      return 1
-      ;;
+    Darwin) OS="darwin" ;;
+    Linux) OS="linux" ;;
+    *) die "unsupported OS: $os_raw (supported: Darwin, Linux)" ;;
   esac
 
   case "$arch_raw" in
-    x86_64|amd64) arch_name="x86_64" ;;
-    arm64|aarch64) arch_name="arm64" ;;
-    *)
-      return 1
-      ;;
+    x86_64|amd64) ARCH="amd64" ;;
+    arm64|aarch64) ARCH="arm64" ;;
+    *) die "unsupported architecture: $arch_raw (supported: amd64, arm64)" ;;
   esac
+}
 
-  latest_tag="$(
-    curl -fsSL https://api.github.com/repos/charmbracelet/gum/releases/latest \
-      | sed -n 's/.*"tag_name":[[:space:]]*"\([^"]*\)".*/\1/p' \
-      | head -n 1
-  )"
-  [[ -n "$latest_tag" ]] || return 1
-  version="${latest_tag#v}"
+normalize_tag() {
+  local v="$1"
+  if [[ "$v" == latest ]]; then
+    printf 'latest'
+  elif [[ "$v" == v* ]]; then
+    printf '%s' "$v"
+  else
+    printf 'v%s' "$v"
+  fi
+}
 
-  tarball="gum_${version}_${os_name}_${arch_name}.tar.gz"
-  url="https://github.com/charmbracelet/gum/releases/download/${latest_tag}/${tarball}"
+resolve_download_url() {
+  local asset="$1"
+  local tag
 
-  tmp_dir="$(mktemp -d -t gum-install.XXXXXX)"
-  trap 'rm -rf "$tmp_dir"' RETURN
+  if [[ -n "$BASE_URL" ]]; then
+    local base
+    base="${BASE_URL%/}"
+    if [[ "$VERSION" == latest ]]; then
+      DOWNLOAD_URL="${base}/releases/latest/${asset}"
+      if version_txt="$(curl -fsSL "${base}/releases/latest/version.txt" 2>/dev/null)"; then
+        DISPLAY_VERSION="${version_txt#v}"
+      else
+        DISPLAY_VERSION="latest"
+      fi
+    else
+      tag="$(normalize_tag "$VERSION")"
+      DOWNLOAD_URL="${base}/releases/download/${tag}/${asset}"
+      DISPLAY_VERSION="${tag#v}"
+    fi
+    return
+  fi
 
-  curl -fsSL "$url" -o "${tmp_dir}/${tarball}" || return 1
-  tar -xzf "${tmp_dir}/${tarball}" -C "$tmp_dir" || return 1
+  if [[ "$VERSION" == latest ]]; then
+    DOWNLOAD_URL="https://github.com/${REPO}/releases/latest/download/${asset}"
+    DISPLAY_VERSION="latest"
+    return
+  fi
+
+  tag="$(normalize_tag "$VERSION")"
+  DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${tag}/${asset}"
+  DISPLAY_VERSION="${tag#v}"
+}
+
+main() {
+  need_cmd curl
+  need_cmd tar
+  need_cmd chmod
+
+  detect_platform
+
+  local asset tmp_dir archive_path target_path
+  asset="beammeup_${OS}_${ARCH}.tar.gz"
+  resolve_download_url "$asset"
+
+  target_path="${INSTALL_DIR}/beammeup"
+  tmp_dir="$(mktemp -d 2>/dev/null || mktemp -d -t beammeup-install)"
+  trap 'rm -rf "$tmp_dir"' EXIT
+  archive_path="${tmp_dir}/${asset}"
+
+  if [[ "${DISPLAY_VERSION}" == "latest" ]]; then
+    info "beaming down beammeup (latest)"
+  else
+    info "beaming down beammeup v${DISPLAY_VERSION}"
+  fi
+  info "downloading ${DOWNLOAD_URL}"
+
+  if ! curl -fsSL "$DOWNLOAD_URL" -o "$archive_path"; then
+    die "download failed (${DOWNLOAD_URL})"
+  fi
+
+  if ! tar -xzf "$archive_path" -C "$tmp_dir"; then
+    die "failed to extract archive"
+  fi
+
+  if [[ ! -f "${tmp_dir}/beammeup" ]]; then
+    die "archive did not contain beammeup binary"
+  fi
 
   mkdir -p "$INSTALL_DIR"
-  mv "${tmp_dir}/gum" "${INSTALL_DIR}/gum" || return 1
-  chmod +x "${INSTALL_DIR}/gum"
-  export PATH="${INSTALL_DIR}:$PATH"
-  trap - RETURN
-  rm -rf "$tmp_dir"
+  mv "${tmp_dir}/beammeup" "$target_path"
+  chmod 755 "$target_path"
+
+  info "installed to ${target_path}"
+
+  case ":$PATH:" in
+    *":${INSTALL_DIR}:"*)
+      info "run: beammeup"
+      ;;
+    *)
+      info "add this to your shell profile:"
+      printf '  export PATH="%s:$PATH"\n' "$INSTALL_DIR"
+      info "then run: beammeup"
+      ;;
+  esac
 }
 
-install_gum() {
-  if command -v gum >/dev/null 2>&1; then
-    info "gum already installed"
-    return 0
-  fi
-
-  info "installing gum for full tui mode..."
-
-  if command -v brew >/dev/null 2>&1; then
-    brew install gum >/dev/null 2>&1 || true
-  elif command -v apt-get >/dev/null 2>&1; then
-    run_with_privilege apt-get update >/dev/null 2>&1 || true
-    run_with_privilege apt-get install -y gum >/dev/null 2>&1 || true
-  elif command -v dnf >/dev/null 2>&1; then
-    run_with_privilege dnf install -y gum >/dev/null 2>&1 || true
-  elif command -v yum >/dev/null 2>&1; then
-    run_with_privilege yum install -y gum >/dev/null 2>&1 || true
-  elif command -v pacman >/dev/null 2>&1; then
-    run_with_privilege pacman -Sy --noconfirm gum >/dev/null 2>&1 || true
-  elif command -v zypper >/dev/null 2>&1; then
-    run_with_privilege zypper --non-interactive install gum >/dev/null 2>&1 || true
-  elif command -v apk >/dev/null 2>&1; then
-    run_with_privilege apk add gum >/dev/null 2>&1 || true
-  fi
-
-  if command -v gum >/dev/null 2>&1; then
-    info "gum ready"
-    return 0
-  fi
-
-  info "package manager install unavailable; trying direct binary install..."
-  if install_gum_binary && command -v gum >/dev/null 2>&1; then
-    info "gum ready"
-    return 0
-  fi
-
-  die "failed to install gum automatically. Install manually: https://github.com/charmbracelet/gum"
-}
-
-command -v curl >/dev/null 2>&1 || die "curl is required"
-command -v chmod >/dev/null 2>&1 || die "chmod is required"
-
-mkdir -p "$INSTALL_DIR"
-TMP_FILE="$(mktemp -t beammeup.XXXXXX)"
-trap 'rm -f "$TMP_FILE"' EXIT
-
-info "beaming down beammeup v${VERSION}"
-info "downloading ${SOURCE_URL}"
-if ! curl -fsSL "$SOURCE_URL" -o "$TMP_FILE"; then
-  die "download failed. Verify TLS/DNS for ${BASE_URL} and that /beammeup exists."
-fi
-
-if ! head -n 1 "$TMP_FILE" | grep -q "^#!/usr/bin/env bash"; then
-  die "downloaded file does not look like an executable beammeup script."
-fi
-
-mv "$TMP_FILE" "$TARGET"
-chmod +x "$TARGET"
-
-install_gum
-
-info "transport complete"
-info "installed to ${TARGET}"
-
-case ":$PATH:" in
-  *":${INSTALL_DIR}:"*)
-    info "run: beammeup"
-    ;;
-  *)
-    info "add this to your shell profile:"
-    printf '  export PATH="%s:$PATH"\n' "$INSTALL_DIR"
-    info "then run: beammeup"
-    ;;
-esac
+main "$@"
