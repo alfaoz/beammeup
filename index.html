@@ -1,213 +1,397 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>beammeup</title>
-  <style>
-    :root {
-      --bg: #070807;
-      --panel: #0d120d;
-      --line: #2b3f2f;
-      --text: #bdf8bf;
-      --muted: #86b88a;
-      --accent: #6ef59a;
-      --danger: #ff8a8a;
-    }
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>beammeup — proxy setup for people who have better things to do</title>
+<meta name="description" content="One command to install. HTTP sidecar or SOCKS5 proxy on your VPS. Ships + hangars. No config spelunking.">
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap');
 
-    * {
-      box-sizing: border-box;
-    }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
 
-    body {
-      margin: 0;
-      min-height: 100vh;
-      display: grid;
-      place-items: center;
-      padding: 24px;
-      background:
-        radial-gradient(circle at 20% 15%, rgba(64, 110, 72, 0.2), transparent 40%),
-        radial-gradient(circle at 80% 90%, rgba(60, 110, 88, 0.14), transparent 36%),
-        var(--bg);
-      color: var(--text);
-      font-family: "JetBrains Mono", "IBM Plex Mono", "Cascadia Code", Menlo, Monaco, Consolas, monospace;
-    }
+  :root {
+    --bg: #0a0a0a;
+    --fg: #b0b0b0;
+    --bright: #e0e0e0;
+    --dim: #505050;
+    --accent: #00d4aa;
+    --accent-dim: #00d4aa44;
+    --red: #ff5f56;
+    --yellow: #ffbd2e;
+    --green: #27c93f;
+  }
 
-    .term {
-      width: min(920px, 100%);
-      border: 1px solid var(--line);
-      background: linear-gradient(180deg, rgba(29, 45, 32, 0.35), transparent 20%), var(--panel);
-      box-shadow: 0 0 0 1px rgba(8, 15, 9, 0.9), 0 20px 60px rgba(0, 0, 0, 0.45);
-      border-radius: 10px;
-      overflow: hidden;
-    }
+  html {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: 'JetBrains Mono', 'Courier New', monospace;
+    font-size: 15px;
+    line-height: 1.7;
+    -webkit-font-smoothing: antialiased;
+  }
 
-    .bar {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-      padding: 10px 14px;
-      border-bottom: 1px solid var(--line);
-      background: rgba(33, 53, 35, 0.35);
-      color: var(--muted);
-      font-size: 13px;
-    }
+  body {
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 3rem 1.5rem 6rem;
+  }
 
-    .lights {
-      display: inline-flex;
-      gap: 6px;
-    }
+  ::selection {
+    background: var(--accent);
+    color: var(--bg);
+  }
 
-    .dot {
-      width: 9px;
-      height: 9px;
-      border-radius: 50%;
-      border: 1px solid rgba(255, 255, 255, 0.2);
-    }
+  a {
+    color: var(--accent);
+    text-decoration: none;
+  }
+  a:hover {
+    text-decoration: underline;
+  }
 
-    .dot:nth-child(1) { background: #ff837d; }
-    .dot:nth-child(2) { background: #ffdb7d; }
-    .dot:nth-child(3) { background: #72f0a3; }
+  .header {
+    margin-bottom: 3rem;
+  }
 
-    .body {
-      padding: 16px;
-      font-size: 14px;
-      line-height: 1.35;
-    }
+  .title {
+    color: var(--bright);
+    font-size: 1.6rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+  }
 
-    pre {
-      margin: 0;
-      white-space: pre;
-      overflow-x: auto;
-      color: var(--text);
-    }
+  .title .accent { color: var(--accent); }
 
-    .row {
-      display: grid;
-      grid-template-columns: 1fr auto;
-      gap: 10px;
-      align-items: center;
-      margin-top: 14px;
-      padding: 10px;
-      border: 1px dashed var(--line);
-      border-radius: 8px;
-      background: rgba(8, 14, 9, 0.65);
-    }
+  .tagline {
+    color: var(--dim);
+    margin-top: 0.25rem;
+    font-size: 0.85rem;
+  }
 
-    code {
-      display: block;
-      overflow-x: auto;
-      color: var(--accent);
-      font-size: 13px;
-      white-space: nowrap;
-    }
+  .version {
+    display: inline-block;
+    color: var(--dim);
+    font-size: 0.75rem;
+    border: 1px solid var(--dim);
+    padding: 0.1rem 0.4rem;
+    border-radius: 3px;
+    margin-left: 0.5rem;
+    vertical-align: middle;
+    position: relative;
+    top: -2px;
+  }
 
-    button {
-      border: 1px solid var(--line);
-      background: #152518;
-      color: var(--text);
-      font: inherit;
-      font-size: 13px;
-      padding: 8px 12px;
-      border-radius: 8px;
-      cursor: pointer;
-      transition: transform 100ms ease, background 120ms ease, border-color 120ms ease;
-    }
+  .install-block {
+    margin: 2.5rem 0;
+    background: #111;
+    border: 1px solid #222;
+    border-radius: 6px;
+    overflow: hidden;
+  }
 
-    button:hover {
-      transform: translateY(-1px);
-      border-color: #4f8a5b;
-      background: #1b3120;
-    }
+  .install-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.5rem 0.9rem;
+    background: #181818;
+    border-bottom: 1px solid #222;
+    font-size: 0.75rem;
+    color: var(--dim);
+  }
 
-    button:active {
-      transform: translateY(0);
-    }
+  .dots {
+    display: flex;
+    gap: 6px;
+  }
+  .dots span {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    display: block;
+  }
+  .dots .r { background: var(--red); }
+  .dots .y { background: var(--yellow); }
+  .dots .g { background: var(--green); }
 
-    .foot {
-      margin-top: 12px;
-      color: var(--muted);
-      font-size: 12px;
-    }
+  .install-cmd {
+    padding: 1.2rem 1rem;
+    font-size: 0.92rem;
+    overflow-x: auto;
+    white-space: nowrap;
+    cursor: pointer;
+    position: relative;
+    transition: background 0.15s;
+  }
 
-    .ok { color: var(--accent); }
-    .err { color: var(--danger); }
+  .install-cmd:hover {
+    background: #161616;
+  }
 
-    @media (max-width: 720px) {
-      .body {
-        font-size: 12px;
-      }
+  .install-cmd .prompt { color: var(--accent); user-select: none; }
+  .install-cmd .cmd { color: var(--bright); }
 
-      .row {
-        grid-template-columns: 1fr;
-      }
-    }
-  </style>
+  .copy-toast {
+    position: absolute;
+    right: 1rem;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--accent);
+    font-size: 0.75rem;
+    opacity: 0;
+    transition: opacity 0.2s;
+    pointer-events: none;
+  }
+  .copy-toast.show { opacity: 1; }
+
+  .section {
+    margin: 2.5rem 0;
+  }
+
+  .section-title {
+    color: var(--dim);
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    margin-bottom: 0.8rem;
+  }
+
+  .section-title::before {
+    content: '# ';
+    color: var(--accent-dim);
+  }
+
+  p {
+    margin-bottom: 0.8rem;
+  }
+
+  .bright { color: var(--bright); }
+  .accent { color: var(--accent); }
+  .dim { color: var(--dim); }
+
+  .feature-list {
+    list-style: none;
+    padding: 0;
+  }
+
+  .feature-list li {
+    padding: 0.15rem 0;
+  }
+
+  .feature-list li::before {
+    content: '→ ';
+    color: var(--accent);
+  }
+
+  code {
+    background: #181818;
+    padding: 0.15rem 0.4rem;
+    border-radius: 3px;
+    font-size: 0.88em;
+    color: var(--bright);
+  }
+
+  .cmd-grid {
+    display: grid;
+    gap: 0.15rem;
+  }
+
+  .cmd-row {
+    display: flex;
+    gap: 1rem;
+  }
+
+  .cmd-name {
+    color: var(--bright);
+    min-width: 12ch;
+    flex-shrink: 0;
+  }
+
+  .cmd-desc {
+    color: var(--dim);
+  }
+
+  hr {
+    border: none;
+    border-top: 1px solid #1a1a1a;
+    margin: 2.5rem 0;
+  }
+
+  .footer {
+    margin-top: 4rem;
+    color: var(--dim);
+    font-size: 0.8rem;
+  }
+
+  .footer .note {
+    font-size: 0.75rem;
+    margin-top: 0.5rem;
+  }
+
+  .cursor {
+    display: inline-block;
+    width: 8px;
+    height: 1.1em;
+    background: var(--accent);
+    vertical-align: text-bottom;
+    animation: blink 1s steps(1) infinite;
+    margin-left: 2px;
+  }
+
+  @keyframes blink {
+    50% { opacity: 0; }
+  }
+
+  .fade-in {
+    opacity: 0;
+    transform: translateY(6px);
+    animation: fadeUp 0.5s ease forwards;
+  }
+
+  @keyframes fadeUp {
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .fade-in:nth-child(1) { animation-delay: 0s; }
+  .fade-in:nth-child(2) { animation-delay: 0.08s; }
+  .fade-in:nth-child(3) { animation-delay: 0.16s; }
+  .fade-in:nth-child(4) { animation-delay: 0.24s; }
+  .fade-in:nth-child(5) { animation-delay: 0.32s; }
+  .fade-in:nth-child(6) { animation-delay: 0.40s; }
+  .fade-in:nth-child(7) { animation-delay: 0.48s; }
+  .fade-in:nth-child(8) { animation-delay: 0.56s; }
+  .fade-in:nth-child(9) { animation-delay: 0.64s; }
+  .fade-in:nth-child(10) { animation-delay: 0.72s; }
+  .fade-in:nth-child(11) { animation-delay: 0.80s; }
+
+  @media (max-width: 520px) {
+    html { font-size: 13.5px; }
+    body { padding: 2rem 1rem 4rem; }
+    .cmd-row { flex-direction: column; gap: 0; }
+    .cmd-desc { padding-left: 2ch; }
+  }
+</style>
 </head>
 <body>
-  <main class="term" role="main">
-    <div class="bar">
-      <span class="lights" aria-hidden="true"><span class="dot"></span><span class="dot"></span><span class="dot"></span></span>
-      <span>beammeup.pw :: command deck</span>
+
+<div class="header fade-in">
+  <div class="title">
+    <span class="accent">▲</span> beammeup<span class="version">v2</span>
+  </div>
+  <div class="tagline">proxy setup for people who have better things to do</div>
+</div>
+
+<div class="install-block fade-in" id="installBlock">
+  <div class="install-bar">
+    <div class="dots"><span class="r"></span><span class="y"></span><span class="g"></span></div>
+    <span>click to copy</span>
+  </div>
+  <div class="install-cmd" onclick="copyInstall()">
+    <span class="prompt">$ </span><span class="cmd">curl -fsSL https://beammeup.pw/install.sh | bash</span>
+    <span class="copy-toast" id="toast">copied ✓</span>
+  </div>
+</div>
+
+<div class="section fade-in">
+  <p>one command to install. one <span class="bright">local</span> cockpit to run.</p>
+  <p>HTTP sidecar for chrome auth prompts, SOCKS5 for everything else.</p>
+  <p class="dim" style="font-size: 0.9rem;">installer downloads a prebuilt binary from GitHub releases. your domain hosts the installer and landing page.</p>
+</div>
+
+<hr class="fade-in">
+
+<div class="section fade-in">
+  <div class="section-title">what it does</div>
+  <ul class="feature-list">
+    <li>SSHs into your VPS, installs what's needed, configures everything</li>
+    <li>HTTP proxy <span class="dim">(squid + auth)</span> or SOCKS5 <span class="dim">(microsocks)</span></li>
+    <li><span class="bright">HTTP sidecar</span> mode that won't overwrite an existing squid config</li>
+    <li>auto-generates credentials, rotates them when you want</li>
+    <li>firewall rules handled <span class="dim">(or skipped, your call)</span></li>
+    <li>saved <span class="bright">ships</span> (local profiles) and <span class="bright">hangars</span> (remote setup)</li>
+    <li>destroy hangar to clean up after yourself like a responsible adult</li>
+  </ul>
+</div>
+
+<hr class="fade-in">
+
+<div class="section fade-in">
+  <div class="section-title">quick start</div>
+  <p><span class="bright">1.</span> you need a VPS <span class="dim">(debian/ubuntu, root ssh)</span></p>
+  <p><span class="bright">2.</span> install beammeup with the one-liner above</p>
+  <p><span class="bright">3.</span> run <code>beammeup</code>, create a ship, and launch. that's it.</p>
+</div>
+
+<hr class="fade-in">
+
+<div class="section fade-in">
+  <div class="section-title">actions</div>
+  <div class="cmd-grid">
+    <div class="cmd-row">
+      <span class="cmd-name">show</span>
+      <span class="cmd-desc">display current setup and (when available) credentials</span>
     </div>
+    <div class="cmd-row">
+      <span class="cmd-name">configure</span>
+      <span class="cmd-desc">install or repair <span class="dim">(keeps existing creds)</span></span>
+    </div>
+    <div class="cmd-row">
+      <span class="cmd-name">rotate</span>
+      <span class="cmd-desc">new credentials, who dis</span>
+    </div>
+    <div class="cmd-row">
+      <span class="cmd-name">destroy</span>
+      <span class="cmd-desc">destroy hangar (remove beammeup remote config)</span>
+    </div>
+  </div>
+</div>
 
-    <section class="body">
-      <pre>______                                                                             
-___  /____________ _______ __________ ____________  _________   ___________      __
-__  __ \  _ \  __ `/_  __ `__ \_  __ `__ \  _ \  / / /__  __ \  ___  __ \_ | /| / /
-_  /_/ /  __/ /_/ /_  / / / / /  / / / / /  __/ /_/ /__  /_/ /____  /_/ /_ |/ |/ / 
-/_.___/\___/\__,_/ /_/ /_/ /_//_/ /_/ /_/\___/\__,_/ _  .___/_(_)  .___/____/|__/  
-                                                     /_/        /_/                 </pre>
+<hr class="fade-in">
 
-      <div class="row">
-        <code id="cmd">curl -fsSL https://beammeup.pw/install.sh | bash</code>
-        <button id="copyBtn" type="button" aria-label="Copy install command">Copy Command</button>
-      </div>
+<div class="section fade-in">
+  <div class="section-title">ships + hangars</div>
+  <p><span class="bright">ship</span> = local profile in <code>~/.beammeup/ships/</code>. it stores host/user/ports and defaults.</p>
+  <p><span class="bright">hangar</span> = the remote services and metadata on that VPS (<code>/etc/beammeup/</code>).</p>
+  <p class="dim" style="font-size: 0.85rem;">ship files never store ssh passwords. beammeup prompts at runtime and caches in-memory per session.</p>
+</div>
 
-      <div class="foot">
-        <pre>$ beammeup
-[beammeup] welcome aboard
-[beammeup] launch your first ship</pre>
-        <p id="status" class="ok" aria-live="polite"></p>
-      </div>
-    </section>
-  </main>
+<div class="section fade-in">
+  <div class="section-title">cli usage</div>
+  <div class="cmd-grid">
+    <div class="cmd-row">
+      <span class="cmd-name" style="min-width:28ch"><span class="accent">beammeup</span></span>
+      <span class="cmd-desc">interactive cockpit</span>
+    </div>
+    <div class="cmd-row">
+      <span class="cmd-name" style="min-width:28ch"><span class="accent">beammeup</span> --list-ships</span>
+      <span class="cmd-desc">see what you've got</span>
+    </div>
+    <div class="cmd-row">
+      <span class="cmd-name" style="min-width:28ch"><span class="accent">beammeup</span> --ship istanbul</span>
+      <span class="cmd-desc">open a saved ship</span>
+    </div>
+    <div class="cmd-row">
+      <span class="cmd-name" style="min-width:28ch"><span class="accent">beammeup</span> --self-update</span>
+      <span class="cmd-desc">beam up a fresh release</span>
+    </div>
+  </div>
+</div>
 
-  <script>
-    (function () {
-      var btn = document.getElementById("copyBtn");
-      var status = document.getElementById("status");
-      var command = document.getElementById("cmd").textContent.trim();
+<div class="footer fade-in">
+  <p>target: debian/ubuntu vps with root ssh and systemd.</p>
+  <p class="note">no telemetry. no accounts. no nonsense. just a local tool doing honest work.<span class="cursor"></span></p>
+</div>
 
-      function setStatus(message, isError) {
-        status.textContent = message;
-        status.className = isError ? "err" : "ok";
-      }
-
-      btn.addEventListener("click", async function () {
-        try {
-          await navigator.clipboard.writeText(command);
-          setStatus("Copied. Paste it in your terminal and launch.");
-        } catch (err) {
-          var area = document.createElement("textarea");
-          area.value = command;
-          area.style.position = "fixed";
-          area.style.opacity = "0";
-          document.body.appendChild(area);
-          area.focus();
-          area.select();
-          try {
-            document.execCommand("copy");
-            setStatus("Copied. Paste it in your terminal and launch.");
-          } catch (fallbackErr) {
-            setStatus("Copy failed. Select and copy the command manually.", true);
-          } finally {
-            document.body.removeChild(area);
-          }
-        }
-      });
-    })();
-  </script>
+<script>
+function copyInstall() {
+  const cmd = 'curl -fsSL https://beammeup.pw/install.sh | bash';
+  navigator.clipboard.writeText(cmd).then(() => {
+    const toast = document.getElementById('toast');
+    toast.classList.add('show');
+    setTimeout(() => toast.classList.remove('show'), 1500);
+  });
+}
+</script>
 </body>
 </html>
