@@ -1,8 +1,45 @@
 # beammeup
 
-persistent terminal cockpit for setting up your own http/socks5 exit node on a vps.
+beammeup is a local CLI cockpit that SSHes into your VPS and sets up a browser-usable proxy exit.
 
 live: [beammeup.pw](https://beammeup.pw)
+
+## what beammeup is
+
+beammeup is install-only. there is no hosted control plane.
+
+you run beammeup on your own machine, and it configures services on your VPS over SSH.
+
+## core concepts
+
+### ships
+A **ship** is a local saved profile in:
+
+- `~/.beammeup/ships/*.ship`
+
+A ship stores:
+
+- target host/IP
+- SSH user/port
+- default protocol (`http` or `socks5`)
+- HTTP mode (`auto` or `sidecar`)
+- proxy port and firewall preference
+
+A ship never stores SSH passwords.
+
+### hangars
+A **hangar** is the remote beammeup-managed setup on that ship's server.
+
+A hangar can include:
+
+- SOCKS5 proxy (microsocks)
+- HTTP proxy (managed squid or isolated sidecar)
+- remote metadata at `/etc/beammeup/hangar.json`
+
+wizard terms:
+
+- `destroy hangar` = remove beammeup-managed remote config
+- `abandon ship` = remove local `.ship` file only
 
 ## install
 
@@ -16,63 +53,71 @@ then run:
 beammeup
 ```
 
-## model
-
-- `ship` = local profile in `~/.beammeup/ships/*.ship`
-- `hangar` = remote beammeup configuration on that server
-
-wizard terms:
-
-- `destroy hangar` = remove remote beammeup-managed proxy setup
-- `abandon ship` = delete local `.ship` profile only
-
-ship files store host/protocol defaults and never store ssh passwords.
-
-## features (v2)
-
-- go runtime (no gum/dialog dependency)
-- persistent cockpit loop with back navigation
-- onboarding flow when no ships exist
-- launch flow that detects `online | missing | drift`
-- HTTP conflict wizard when existing Squid config is detected
-- isolated HTTP sidecar mode (`--http-mode sidecar`) that never overwrites `/etc/squid/squid.conf`
-- one hangar can manage both http and socks5 configs
-- in-memory ssh password cache per session only
-- non-interactive flags kept for automation parity
-
-## interactive flow
+## interactive cockpit (default)
 
 ```bash
 beammeup
 ```
 
-- create/select ships
-- launch ship
-- inspect hangar
-- configure/repair
-- rotate credentials
-- destroy hangar (optional abandon ship prompt)
+beammeup opens a persistent menu loop:
 
-## non-interactive examples
+- if you have no ships, onboarding creates one
+- select ship -> ship cockpit
+- launch/hangar/edit/abandon actions
+- all screens support back navigation
 
-list ships:
+password behavior:
+
+- prompted once per ship per app session
+- cached in memory only
+- never written to disk
+
+## protocols and HTTP modes
+
+### SOCKS5
+- lightweight and reliable
+- best when your client supports SOCKS5 auth properly
+
+### HTTP
+for browser-extension compatibility.
+
+HTTP modes:
+
+- `auto` (default): beammeup may manage `/etc/squid/squid.conf` when safe
+- `sidecar`: isolated HTTP service that does **not** overwrite existing system squid config
+
+## HTTP conflict wizard
+
+if beammeup detects an existing non-beammeup squid config, it does not overwrite it.
+
+in TUI, you get a conflict wizard with options to:
+
+- switch to SOCKS5 fallback
+- create isolated HTTP sidecar
+- cancel
+
+## non-interactive CLI
+
+beammeup keeps scriptable flags for automation.
+
+### list ships
 
 ```bash
 beammeup --list-ships
 ```
 
-configure http:
+### configure SOCKS5
 
 ```bash
 beammeup \
   --host 203.0.113.10 \
   --ssh-user root \
-  --protocol http \
-  --proxy-port 18181 \
+  --protocol socks5 \
+  --proxy-port 18080 \
   --action configure
 ```
 
-configure isolated http sidecar (safe with existing squid):
+### configure HTTP sidecar (safe with existing squid)
 
 ```bash
 beammeup \
@@ -84,16 +129,16 @@ beammeup \
   --action configure
 ```
 
-show current socks5 setup from saved ship:
+### show inventory
 
 ```bash
-beammeup --ship rpsvps --protocol socks5 --action show
+beammeup --ship myship --show-inventory
 ```
 
-destroy hangar non-interactively:
+### destroy hangar
 
 ```bash
-beammeup --ship rpsvps --action destroy --yes
+beammeup --ship myship --action destroy --yes
 ```
 
 ## updater
@@ -108,9 +153,17 @@ or auto-update before run:
 beammeup --auto-update
 ```
 
+## supported target VPS
+
+currently focused on Debian/Ubuntu with:
+
+- root SSH access
+- `apt-get`
+- `systemd`
+
 ## release builds
 
-build release archives for supported targets:
+build release archives:
 
 ```bash
 scripts/build-release.sh
@@ -123,14 +176,6 @@ artifacts:
 - `dist/beammeup_linux_amd64.tar.gz`
 - `dist/beammeup_linux_arm64.tar.gz`
 - `dist/version.txt`
-
-## supported target vps
-
-currently focused on debian/ubuntu with:
-
-- root ssh access
-- `apt-get`
-- `systemd`
 
 ## license
 

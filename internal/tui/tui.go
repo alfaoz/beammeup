@@ -3,8 +3,10 @@ package tui
 import (
 	"errors"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/alfaoz/beammeup/internal/hangar"
 	"github.com/alfaoz/beammeup/internal/session"
@@ -317,7 +319,7 @@ func (a *App) hangarMenu(ship ships.Ship) error {
 				a.note("cancelled", "destroy confirmation did not match")
 				continue
 			}
-			res, err := a.execWithPassword(ship, hangar.ActionInput{Mode: "destroy"})
+			res, err := a.execWithLoader(ship, hangar.ActionInput{Mode: "destroy"}, "destroying hangar on remote host")
 			if err != nil {
 				if errors.Is(err, errUserCancelled) {
 					continue
@@ -372,7 +374,7 @@ func (a *App) launchShip(ship ships.Ship) error {
 			return nil
 		}
 		if choice == "recreate" {
-			if _, err := a.execWithPassword(ship, hangar.ActionInput{Mode: "destroy"}); err != nil {
+			if _, err := a.execWithLoader(ship, hangar.ActionInput{Mode: "destroy"}, "destroying current hangar before recreate"); err != nil {
 				if errors.Is(err, errUserCancelled) {
 					return nil
 				}
@@ -602,6 +604,15 @@ func (a *App) execWithPassword(ship ships.Ship, in hangar.ActionInput) (hangar.A
 		return hangar.ActionResult{}, err
 	}
 	return a.HangarSvc.Execute(ship, pwd, in)
+}
+
+func (a *App) execWithLoader(ship ships.Ship, in hangar.ActionInput, label string) (hangar.ActionResult, error) {
+	done := make(chan struct{})
+	go renderLoader(done, label)
+	res, err := a.execWithPassword(ship, in)
+	close(done)
+	clearLoaderLine()
+	return res, err
 }
 
 func (a *App) passwordForShip(ship ships.Ship) (string, error) {
@@ -876,6 +887,26 @@ func normalizeHTTPMode(v string) string {
 	default:
 		return ""
 	}
+}
+
+func renderLoader(done <-chan struct{}, label string) {
+	frames := []rune{'|', '/', '-', '\\'}
+	t := time.NewTicker(120 * time.Millisecond)
+	defer t.Stop()
+	i := 0
+	for {
+		fmt.Fprintf(os.Stderr, "\r[beammeup] %s %c", label, frames[i%len(frames)])
+		i++
+		select {
+		case <-done:
+			return
+		case <-t.C:
+		}
+	}
+}
+
+func clearLoaderLine() {
+	fmt.Fprintf(os.Stderr, "\r%s\r", strings.Repeat(" ", 120))
 }
 
 func fallback(v, d string) string {
