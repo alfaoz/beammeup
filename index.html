@@ -63,8 +63,6 @@
       background: var(--panel);
       box-shadow: 0 0 0 1px rgba(0,0,0,0.65), 0 24px 80px rgba(0,0,0,0.55);
       overflow: hidden;
-      transform: scale(0.7);
-      transform-origin: center;
     }
 
     .bar {
@@ -185,8 +183,13 @@
 
     @media (max-width: 560px) {
       body { padding: 16px; }
-      .logo { font-size: 9px; }
-      .tagline { font-size: 13px; }
+      /* Make the text inside the "window" ~30% smaller on phones. */
+      .bar { font-size: 8px; }
+      .logo { font-size: 6px; }
+      .tagline { font-size: 9px; }
+      .cmd code { font-size: 9px; }
+      .cmdmeta { font-size: 8px; }
+      .footer { font-size: 8px; }
       .cmd code { -webkit-overflow-scrolling: touch; }
     }
 
