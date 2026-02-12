@@ -11,7 +11,7 @@
     @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap');
 
     :root {
-      --bg: rgb(0, 0, 0);
+      --bg: rgb(1, 1, 1);
       --panel: #0b0b0b;
       --line: #1f1f1f;
       --text: #bdbdbd;
@@ -46,34 +46,23 @@
       content: "";
       position: fixed;
       inset: 0;
-      background:
-        radial-gradient(circle at 50% 50%, rgba(255,255,255,0.05), transparent 55%),
-        url("/ico.png") center / 520px 520px no-repeat;
-      opacity: 0.10;
+      background: url("/ico.png") center / min(420px, 80vmin) no-repeat;
+      opacity: 0;
       filter: grayscale(100%);
       pointer-events: none;
     }
 
     body.closed::before {
-      opacity: 0.18;
+      opacity: 0.20;
     }
 
     .frame {
       width: min(920px, 100%);
       border: 1px solid var(--line);
       border-radius: 10px;
-      background: linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent 35%), var(--panel);
+      background: var(--panel);
       box-shadow: 0 0 0 1px rgba(0,0,0,0.65), 0 24px 80px rgba(0,0,0,0.55);
       overflow: hidden;
-      transform-origin: 22px 22px;
-      transition: transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1), opacity 220ms ease, filter 220ms ease;
-    }
-
-    .frame.closing {
-      opacity: 0;
-      transform: translate(-14px, -12px) scale(0.86);
-      filter: blur(1px);
-      pointer-events: none;
     }
 
     .bar {
@@ -83,7 +72,7 @@
       gap: 12px;
       padding: 10px 14px;
       border-bottom: 1px solid var(--line);
-      background: rgba(255, 255, 255, 0.02);
+      background: #0f0f0f;
       font-size: 12px;
       color: var(--muted);
     }
@@ -300,20 +289,13 @@ _  /_/ /  __/ /_/ /_  / / / / /  / / / / /  __/ /_/ /__  /_/ /____  /_/ /_ |/ |/
       function closeWindow() {
         if (!frame || frame.hidden) return;
         document.body.classList.add('closed');
-        frame.classList.add('closing');
-        window.setTimeout(function () {
-          frame.hidden = true;
-        }, 240);
+        frame.hidden = true;
       }
 
       function reopenWindow() {
         if (!frame || !frame.hidden) return;
         frame.hidden = false;
-        // allow a frame to render before we remove closing class
-        window.requestAnimationFrame(function () {
-          frame.classList.remove('closing');
-          document.body.classList.remove('closed');
-        });
+        document.body.classList.remove('closed');
       }
 
       if (closeBtn) {
