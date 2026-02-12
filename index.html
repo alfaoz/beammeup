@@ -155,32 +155,18 @@
       overflow-x: auto;
       font-size: 13px;
       color: var(--bright);
-      padding-right: 110px;
     }
 
-    .cmd .inline-hint {
-      position: absolute;
-      right: 10px;
-      top: 12px;
+    .cmdmeta {
+      display: flex;
+      justify-content: flex-end;
+      padding: 0 10px 10px;
       font-size: 12px;
       color: var(--muted);
-      transition: opacity 150ms ease;
-      pointer-events: none;
+      user-select: none;
     }
 
-    .toast {
-      position: absolute;
-      right: 10px;
-      top: 12px;
-      font-size: 12px;
-      color: var(--accent);
-      opacity: 0;
-      transition: opacity 150ms ease;
-      pointer-events: none;
-    }
-
-    .cmd.copied .toast { opacity: 1; }
-    .cmd.copied .inline-hint { opacity: 0; }
+    .cmd.copied .cmdmeta { color: var(--accent); }
 
     .footer {
       margin-top: 14px;
@@ -199,35 +185,7 @@
       body { padding: 16px; }
       .logo { font-size: 9px; }
       .tagline { font-size: 13px; }
-
-      /* On phones, keep the command in one piece and put the hint below it. */
-      .cmd {
-        padding: 12px 10px 10px;
-        display: grid;
-        grid-template-columns: 1fr;
-        grid-template-rows: auto auto;
-        gap: 6px;
-      }
-      .cmd code {
-        font-size: 13px;
-        white-space: nowrap;
-        overflow-x: auto;
-        -webkit-overflow-scrolling: touch;
-        word-break: normal;
-        padding-right: 0;
-        grid-row: 1;
-        grid-column: 1;
-      }
-      .cmd .inline-hint,
-      .toast {
-        grid-row: 2;
-        grid-column: 1;
-        justify-self: end;
-        position: static;
-        display: block;
-        text-align: right;
-        margin-top: 0;
-      }
+      .cmd code { -webkit-overflow-scrolling: touch; }
     }
 
     @media (max-height: 560px) {
@@ -261,9 +219,8 @@ _  /_/ /  __/ /_/ /_  / / / / /  / / / / /  __/ /_/ /__  /_/ /____  /_/ /_ |/ |/
       </p>
 
       <div class="cmd" id="cmd" role="button" tabindex="0" aria-label="Copy install command">
-        <span class="inline-hint" id="hint">click to copy</span>
-        <span class="toast" id="toast">copied</span>
         <code>curl -fsSL https://beammeup.pw/install.sh | bash</code>
+        <div class="cmdmeta" id="hint">tap to copy</div>
       </div>
 
       <div class="footer">
@@ -276,13 +233,17 @@ _  /_/ /  __/ /_/ /_  / / / / /  / / / / /  __/ /_/ /__  /_/ /____  /_/ /_ |/ |/
     (function () {
       var cmd = 'curl -fsSL https://beammeup.pw/install.sh | bash';
       var box = document.getElementById('cmd');
-      var toast = document.getElementById('toast');
+      var hint = document.getElementById('hint');
       var frame = document.querySelector('.frame');
       var closeBtn = document.getElementById('closeBtn');
 
+      var hintDefault = hint ? hint.textContent : '';
+
       function showToast() {
         box.classList.add('copied');
+        if (hint) hint.textContent = 'copied';
         window.setTimeout(function () { box.classList.remove('copied'); }, 1200);
+        window.setTimeout(function () { if (hint) hint.textContent = hintDefault; }, 1300);
       }
 
       async function copy() {
