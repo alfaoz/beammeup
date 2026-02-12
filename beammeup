@@ -7,7 +7,7 @@ DEFAULT_SOCKS_PORT=1080
 DEFAULT_HTTP_PORT=18181
 DEFAULT_BASE_URL="https://beammeup.pw"
 DEFAULT_SHIPS_DIR="${HOME:-.}/.beammeup/ships"
-BEAMMEUP_VERSION="1.4.1"
+BEAMMEUP_VERSION="1.4.2"
 USE_TUI=0
 
 info() {
@@ -85,9 +85,12 @@ tui_yesno() {
 tui_msg() {
   local title="$1"
   local message="$2"
+  local rendered
+  rendered="$(printf '%b' "$message")"
   gum style --border rounded --padding "1 2" --margin "1 0" --foreground 212 "${title}"
-  gum style --padding "0 1" "$message"
-  gum input --prompt "press enter to continue > " --value "" >/dev/null || true
+  gum style --padding "0 1" "$rendered"
+  printf '\npress enter to continue > '
+  IFS= read -r _
 }
 
 print_help() {
