@@ -46,3 +46,23 @@ func TestNormalizeAction(t *testing.T) {
 		t.Fatal("expected invalid action")
 	}
 }
+
+func TestNormalizeHTTPMode(t *testing.T) {
+	cases := map[string]string{
+		"":        "",
+		"auto":    "",
+		"sidecar": "sidecar",
+	}
+	for in, want := range cases {
+		got, ok := NormalizeHTTPMode(in)
+		if !ok {
+			t.Fatalf("expected mode %q to be valid", in)
+		}
+		if got != want {
+			t.Fatalf("NormalizeHTTPMode(%q)=%q want %q", in, got, want)
+		}
+	}
+	if _, ok := NormalizeHTTPMode("managed"); ok {
+		t.Fatal("expected invalid mode")
+	}
+}

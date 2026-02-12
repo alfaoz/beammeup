@@ -265,7 +265,7 @@ func (a *App) hangarMenu(ship ships.Ship) error {
 			a.status[ship.Name] = inv.HangarStatus
 			a.showInventoryCard(ship, inv)
 		case "configure", "rotate":
-			protocol, port, noFW, err := a.configurePrompt(ship)
+			protocol, httpMode, port, noFW, err := a.configurePrompt(ship)
 			if err != nil {
 				if errors.Is(err, errUserCancelled) {
 					continue
@@ -275,6 +275,7 @@ func (a *App) hangarMenu(ship ships.Ship) error {
 			in := hangar.ActionInput{
 				Mode:              "apply",
 				Protocol:          protocol,
+				HTTPMode:          httpMode,
 				ProxyPort:         port,
 				NoFirewallChange:  noFW,
 				RotateCredentials: choice == "rotate",
@@ -284,7 +285,7 @@ func (a *App) hangarMenu(ship ships.Ship) error {
 				if errors.Is(err, errUserCancelled) {
 					continue
 				}
-				handled, updated, fallbackErr := a.handleHTTPConflictWithSocksFallback(ship, protocol, err)
+				handled, updated, fallbackErr := a.handleHTTPConflictWizard(ship, protocol, port, err)
 				if handled {
 					if fallbackErr != nil {
 						return fallbackErr
@@ -402,11 +403,12 @@ func (a *App) ensureHangarCreated(ship ships.Ship, forcePrompt bool) error {
 		res, err := a.execWithPassword(ship, hangar.ActionInput{
 			Mode:             "apply",
 			Protocol:         protocol,
+			HTTPMode:         ship.HTTPMode,
 			ProxyPort:        port,
 			NoFirewallChange: ship.NoFirewallChange,
 		})
 		if err != nil {
-			handled, _, fallbackErr := a.handleHTTPConflictWithSocksFallback(ship, protocol, err)
+			handled, _, fallbackErr := a.handleHTTPConflictWizard(ship, protocol, port, err)
 			if handled {
 				return fallbackErr
 			}
@@ -418,8 +420,9 @@ func (a *App) ensureHangarCreated(ship ships.Ship, forcePrompt bool) error {
 	return nil
 }
 
-func (a *App) configurePrompt(ship ships.Ship) (protocol string, port int, noFW bool, err error) {
+func (a *App) configurePrompt(ship ships.Ship) (protocol string, httpMode string, port int, noFW bool, err error) {
 	protocol = fallback(ship.Protocol, "http")
+	httpMode = normalizeHTTPMode(ship.HTTPMode)
 	portStr := strconv.Itoa(ship.ProxyPort)
 	if ship.ProxyPort == 0 {
 		if protocol == "socks5" {
@@ -440,21 +443,44 @@ func (a *App) configurePrompt(ship ships.Ship) (protocol string, port int, noFW 
 	)
 	if err := huh.NewForm(group).Run(); err != nil {
 		if isUserCancelled(err) {
-			return "", 0, false, errUserCancelled
+			return "", "", 0, false, errUserCancelled
 		}
-		return "", 0, false, err
+		return "", "", 0, false, err
 	}
+
+	if protocol == "http" {
+		modeChoice := httpMode
+		if err := huh.NewSelect[string]().
+			Title("HTTP mode").
+			Description("Auto may manage squid if safe. Sidecar is isolated and never overwrites existing /etc/squid/squid.conf.").
+			Options(
+				huh.NewOption("Auto", ""),
+				huh.NewOption("Isolated sidecar", "sidecar"),
+			).
+			Value(&modeChoice).
+			Run(); err != nil {
+			if isUserCancelled(err) {
+				return "", "", 0, false, errUserCancelled
+			}
+			return "", "", 0, false, err
+		}
+		httpMode = modeChoice
+	} else {
+		httpMode = ""
+	}
+
 	port, err = strconv.Atoi(strings.TrimSpace(portStr))
 	if err != nil || port <= 0 {
-		return "", 0, false, fmt.Errorf("invalid proxy port: %s", portStr)
+		return "", "", 0, false, fmt.Errorf("invalid proxy port: %s", portStr)
 	}
 	ship.Protocol = protocol
+	ship.HTTPMode = httpMode
 	ship.ProxyPort = port
 	ship.NoFirewallChange = noFW
 	if _, saveErr := a.Store.Save(ship); saveErr != nil {
-		return "", 0, false, saveErr
+		return "", "", 0, false, saveErr
 	}
-	return protocol, port, noFW, nil
+	return protocol, httpMode, port, noFW, nil
 }
 
 func (a *App) createShipForm(existing ships.Ship) (ships.Ship, error) {
@@ -464,6 +490,7 @@ func (a *App) createShipForm(existing ships.Ship) (ships.Ship, error) {
 	sshPort := strconv.Itoa(nonZero(ship.SSHPort, 22))
 	sshUser := fallback(ship.SSHUser, "root")
 	protocol := fallback(ship.Protocol, "http")
+	httpMode := normalizeHTTPMode(ship.HTTPMode)
 	proxyPort := strconv.Itoa(nonZero(ship.ProxyPort, defaultProxy(protocol)))
 	noFW := ship.NoFirewallChange
 
@@ -487,6 +514,27 @@ func (a *App) createShipForm(existing ships.Ship) (ships.Ship, error) {
 		return ships.Ship{}, err
 	}
 
+	if protocol == "http" {
+		modeChoice := httpMode
+		if err := huh.NewSelect[string]().
+			Title("HTTP mode").
+			Description("Auto may manage squid if safe. Sidecar is isolated and never overwrites existing /etc/squid/squid.conf.").
+			Options(
+				huh.NewOption("Auto", ""),
+				huh.NewOption("Isolated sidecar", "sidecar"),
+			).
+			Value(&modeChoice).
+			Run(); err != nil {
+			if isUserCancelled(err) {
+				return ships.Ship{}, errUserCancelled
+			}
+			return ships.Ship{}, err
+		}
+		httpMode = modeChoice
+	} else {
+		httpMode = ""
+	}
+
 	name = ships.SanitizeName(name)
 	if name == "" {
 		return ships.Ship{}, fmt.Errorf("ship name is required")
@@ -506,6 +554,7 @@ func (a *App) createShipForm(existing ships.Ship) (ships.Ship, error) {
 		SSHPort:          port,
 		SSHUser:          strings.TrimSpace(sshUser),
 		Protocol:         protocol,
+		HTTPMode:         httpMode,
 		ProxyPort:        proxy,
 		NoFirewallChange: noFW,
 	}
@@ -581,7 +630,8 @@ func (a *App) showInventoryCard(ship ships.Ship, inv hangar.Inventory) {
 		"",
 	}
 	if inv.HTTP.Exists {
-		lines = append(lines, fmt.Sprintf("HTTP   active=%v  port=%s  user=%s", inv.HTTP.Active, fallback(inv.HTTP.Port, "-"), fallback(inv.HTTP.User, "-")))
+		httpMode := fallback(inv.HTTP.Mode, "managed")
+		lines = append(lines, fmt.Sprintf("HTTP   active=%v  mode=%s  port=%s  user=%s", inv.HTTP.Active, httpMode, fallback(inv.HTTP.Port, "-"), fallback(inv.HTTP.User, "-")))
 	}
 	if inv.Socks5.Exists {
 		lines = append(lines, fmt.Sprintf("SOCKS5 active=%v  port=%s  user=%s", inv.Socks5.Active, fallback(inv.Socks5.Port, "-"), fallback(inv.Socks5.User, "-")))
@@ -606,6 +656,7 @@ func (a *App) showResultCard(res hangar.ActionResult) {
 	msg := []string{
 		fmt.Sprintf("Action: %s", res.Action),
 		fmt.Sprintf("Protocol: %s", res.Protocol),
+		fmt.Sprintf("HTTP mode: %s", fallback(res.HTTPMode, "-")),
 		fmt.Sprintf("Host: %s", res.Host),
 		fmt.Sprintf("Port: %s", res.Port),
 		fmt.Sprintf("Username: %s", fallback(res.User, "-")),
@@ -632,7 +683,7 @@ func (a *App) note(title, body string) {
 	_ = huh.NewNote().Title(title).Description(body).Next(true).Run()
 }
 
-func (a *App) handleHTTPConflictWithSocksFallback(ship ships.Ship, requestedProtocol string, cause error) (bool, ships.Ship, error) {
+func (a *App) handleHTTPConflictWizard(ship ships.Ship, requestedProtocol string, requestedPort int, cause error) (bool, ships.Ship, error) {
 	if strings.ToLower(strings.TrimSpace(requestedProtocol)) != "http" {
 		return false, ship, nil
 	}
@@ -640,10 +691,67 @@ func (a *App) handleHTTPConflictWithSocksFallback(ship ships.Ship, requestedProt
 		return false, ship, nil
 	}
 
-	if !a.confirm("HTTP setup is blocked by an existing Squid config. Switch this ship to SOCKS5 instead?") {
-		return true, ship, cause
+	choice := ""
+	if err := huh.NewSelect[string]().
+		Title("HTTP conflict detected").
+		Description("beammeup found an existing non-beammeup Squid config and will not overwrite it. Choose how to continue.").
+		Options(
+			huh.NewOption("Use SOCKS5 fallback (recommended)", "socks"),
+			huh.NewOption("Create isolated HTTP sidecar (no overwrite)", "sidecar"),
+			huh.NewOption("Cancel", "cancel"),
+		).
+		Value(&choice).
+		Run(); err != nil {
+		if isUserCancelled(err) {
+			return true, ship, nil
+		}
+		return true, ship, err
+	}
+	if choice == "cancel" {
+		a.note("HTTP not changed", "existing Squid config remains untouched.")
+		return true, ship, nil
 	}
 
+	if choice == "sidecar" {
+		ports := fallbackHTTPPorts(requestedPort)
+		var lastErr error
+		for _, p := range ports {
+			res, err := a.execWithPassword(ship, hangar.ActionInput{
+				Mode:             "apply",
+				Protocol:         "http",
+				HTTPMode:         "sidecar",
+				ProxyPort:        p,
+				NoFirewallChange: ship.NoFirewallChange,
+			})
+			if err != nil {
+				lastErr = err
+				if isPortBusyError(err) {
+					continue
+				}
+				return true, ship, err
+			}
+
+			updated := ship
+			updated.Protocol = "http"
+			updated.HTTPMode = "sidecar"
+			updated.ProxyPort = p
+			saved, saveErr := a.Store.Save(updated)
+			if saveErr != nil {
+				return true, ship, saveErr
+			}
+
+			a.status[saved.Name] = hangar.StatusOnline
+			a.note("HTTP sidecar ready", "existing Squid config was preserved. beammeup created an isolated sidecar HTTP proxy.")
+			a.showResultCard(res)
+			return true, saved, nil
+		}
+		if lastErr != nil {
+			return true, ship, lastErr
+		}
+		return true, ship, fmt.Errorf("unable to create HTTP sidecar")
+	}
+
+	// SOCKS fallback path
 	ports := fallbackSocksPorts(ship.ProxyPort)
 	var lastErr error
 	for _, p := range ports {
@@ -663,6 +771,7 @@ func (a *App) handleHTTPConflictWithSocksFallback(ship ships.Ship, requestedProt
 
 		updated := ship
 		updated.Protocol = "socks5"
+		updated.HTTPMode = ""
 		updated.ProxyPort = p
 		saved, saveErr := a.Store.Save(updated)
 		if saveErr != nil {
@@ -735,6 +844,38 @@ func fallbackSocksPorts(current int) []int {
 	add(28080)
 	add(38080)
 	return candidates
+}
+
+func fallbackHTTPPorts(current int) []int {
+	candidates := []int{}
+	add := func(v int) {
+		if v <= 0 {
+			return
+		}
+		for _, have := range candidates {
+			if have == v {
+				return
+			}
+		}
+		candidates = append(candidates, v)
+	}
+
+	if current > 0 {
+		add(current)
+	}
+	add(18181)
+	add(18182)
+	add(28181)
+	return candidates
+}
+
+func normalizeHTTPMode(v string) string {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "sidecar":
+		return "sidecar"
+	default:
+		return ""
+	}
 }
 
 func fallback(v, d string) string {
