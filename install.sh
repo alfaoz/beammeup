@@ -16,6 +16,7 @@ REPO="${BEAMMEUP_REPO:-alfaoz/beammeup}"
 BASE_URL="${BEAMMEUP_BASE_URL:-}"
 INSTALL_DIR="${BEAMMEUP_INSTALL_DIR:-$HOME/.local/bin}"
 VERSION="${BEAMMEUP_VERSION:-latest}"
+TMP_DIR=""
 
 info() {
   printf '[beammedown] %s\n' "$*"
@@ -99,14 +100,14 @@ main() {
 
   detect_platform
 
-  local asset tmp_dir archive_path target_path
+  local asset archive_path target_path
   asset="beammeup_${OS}_${ARCH}.tar.gz"
   resolve_download_url "$asset"
 
   target_path="${INSTALL_DIR}/beammeup"
-  tmp_dir="$(mktemp -d 2>/dev/null || mktemp -d -t beammeup-install)"
-  trap 'rm -rf "$tmp_dir"' EXIT
-  archive_path="${tmp_dir}/${asset}"
+  TMP_DIR="$(mktemp -d 2>/dev/null || mktemp -d -t beammeup-install)"
+  trap cleanup EXIT
+  archive_path="${TMP_DIR}/${asset}"
 
   if [[ "${DISPLAY_VERSION}" == "latest" ]]; then
     info "beaming down beammeup (latest)"
@@ -119,16 +120,16 @@ main() {
     die "download failed (${DOWNLOAD_URL})"
   fi
 
-  if ! tar -xzf "$archive_path" -C "$tmp_dir"; then
+  if ! tar -xzf "$archive_path" -C "$TMP_DIR"; then
     die "failed to extract archive"
   fi
 
-  if [[ ! -f "${tmp_dir}/beammeup" ]]; then
+  if [[ ! -f "${TMP_DIR}/beammeup" ]]; then
     die "archive did not contain beammeup binary"
   fi
 
   mkdir -p "$INSTALL_DIR"
-  mv "${tmp_dir}/beammeup" "$target_path"
+  mv "${TMP_DIR}/beammeup" "$target_path"
   chmod 755 "$target_path"
 
   info "installed to ${target_path}"
@@ -146,3 +147,8 @@ main() {
 }
 
 main "$@"
+cleanup() {
+  if [[ -n "${TMP_DIR:-}" && -d "${TMP_DIR:-}" ]]; then
+    rm -rf "${TMP_DIR}"
+  fi
+}
