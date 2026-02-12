@@ -196,9 +196,26 @@
     .footer a:hover { text-decoration: underline; }
 
     @media (max-width: 560px) {
+      body { padding: 16px; }
       .logo { font-size: 9px; }
-      .tagline { font-size: 12px; }
-      .cmd code { font-size: 12px; }
+      .tagline { font-size: 13px; }
+
+      /* On phones, prioritize readability over a single-line command. */
+      .cmd { padding: 12px 10px 10px; }
+      .cmd code {
+        font-size: 13px;
+        white-space: normal;
+        overflow-x: visible;
+        word-break: break-word;
+        padding-right: 0;
+      }
+      .cmd .inline-hint,
+      .toast {
+        position: static;
+        display: block;
+        text-align: right;
+        margin-top: 6px;
+      }
     }
 
     @media (max-height: 560px) {
@@ -211,8 +228,8 @@
 <body>
   <main class="frame" role="main">
     <div class="bar">
-      <span class="lights" aria-hidden="true">
-        <button class="dot r close" id="closeBtn" type="button" aria-label="Close window"></button><span class="dot y"></span><span class="dot g"></span>
+      <span class="lights">
+        <button class="dot r close" id="closeBtn" type="button" aria-label="Close window"></button><span class="dot y" aria-hidden="true"></span><span class="dot g" aria-hidden="true"></span>
       </span>
       <span>beammeup.pw</span>
     </div>
