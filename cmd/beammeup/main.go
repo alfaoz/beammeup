@@ -10,6 +10,7 @@ import (
 	"github.com/alfaoz/beammeup/internal/hangar"
 	"github.com/alfaoz/beammeup/internal/session"
 	"github.com/alfaoz/beammeup/internal/ships"
+	"github.com/alfaoz/beammeup/internal/sshx"
 	"github.com/alfaoz/beammeup/internal/tui"
 	"github.com/alfaoz/beammeup/internal/update"
 	"github.com/alfaoz/beammeup/internal/version"
@@ -45,6 +46,17 @@ func run(args []string) int {
 	}
 
 	hangarSvc := hangar.NewService()
+	sshOpts := sshx.DefaultConnectOptions()
+	if strings.TrimSpace(opts.SSHKnownHosts) != "" {
+		sshOpts.KnownHostsPath = strings.TrimSpace(opts.SSHKnownHosts)
+	}
+	if opts.StrictHostKey {
+		sshOpts.HostKeyMode = sshx.HostKeyStrict
+	}
+	if opts.InsecureHostKey {
+		sshOpts.HostKeyMode = sshx.HostKeyInsecureIgnore
+	}
+	hangarSvc.SSH = sshOpts
 
 	if opts.SelfUpdate {
 		result, err := runSelfUpdate(opts.BaseURL)
@@ -65,7 +77,7 @@ func run(args []string) int {
 		}
 	}
 
-	isTTY := term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd()))
+	isTTY := isTerminalFile(os.Stdin) && isTerminalFile(os.Stdout)
 	if cli.RequiresNonInteractive(opts, isTTY) {
 		runner := &cli.Runner{Store: store, Hangar: hangarSvc}
 		code, err := runner.Run(opts)
@@ -112,4 +124,13 @@ func printUpdateMessage(res update.Result) {
 
 func printErr(err error) {
 	fmt.Fprintf(os.Stderr, "[beammeup] ERROR: %v\n", err)
+}
+
+func isTerminalFile(f *os.File) bool {
+	fd := f.Fd()
+	// Guard against uintptr->int overflow (paranoia, but keeps scanners quiet).
+	if fd > uintptr(^uint(0)>>1) {
+		return false
+	}
+	return term.IsTerminal(int(fd))
 }

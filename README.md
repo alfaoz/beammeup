@@ -161,6 +161,24 @@ currently focused on Debian/Ubuntu with:
 - `apt-get`
 - `systemd`
 
+## security notes
+
+### SSH host keys
+beammeup records and verifies SSH host keys in:
+
+- `~/.beammeup/known_hosts`
+
+first connection is TOFU (trust-on-first-use). if a host key changes (rebuild / MITM), beammeup will refuse to connect.
+
+override:
+
+- `--strict-host-key` (do not auto-trust new keys)
+- `--insecure-ignore-host-key` (unsafe, disables host key verification)
+- `--ssh-known-hosts <path>` or `BEAMMEUP_SSH_KNOWN_HOSTS` (custom known_hosts path)
+
+### installer + self-update integrity
+`install.sh` and `beammeup --self-update` verify downloaded release archives using the `SHA256SUMS` file published with each release.
+
 ## release builds
 
 build release archives:

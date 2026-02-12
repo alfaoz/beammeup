@@ -835,19 +835,18 @@ destroy_hangar() {
   local note_parts=()
 
   FIREWALL_NOTE=""
+  note_parts+=("firewall rules not modified (safe destroy)")
 
   if [[ "$SOCKS_EXISTS" == "1" ]]; then
     if service_defined "$SOCKS_SERVICE"; then
       systemctl disable --now "$SOCKS_SERVICE" >/dev/null 2>&1 || true
     fi
-    cleanup_firewall_rule "${SOCKS_PORT:-}"
     rm -f "$SOCKS_ENV" "$SOCKS_SERVICE_FILE"
     removed_any=1
     note_parts+=("SOCKS5 removed")
   fi
 
   if [[ "$HTTP_EXISTS" == "1" ]]; then
-    cleanup_firewall_rule "${HTTP_PORT:-}"
     if [[ "$HTTP_MODE" == "sidecar" || -f "$HTTP_SIDECAR_SERVICE_FILE" || -f "$HTTP_SIDECAR_CONF" ]]; then
       if service_defined "$HTTP_SIDECAR_SERVICE"; then
         systemctl disable --now "$HTTP_SIDECAR_SERVICE" >/dev/null 2>&1 || true
@@ -883,9 +882,9 @@ destroy_hangar() {
   systemctl daemon-reload
 
   if [[ "$removed_any" -eq 1 ]]; then
-    emit_result "DESTROY" "$(get_public_ip)" "" "" "destroyed" "${note_parts[*]}"
+    emit_result "DESTROY" "" "" "" "destroyed" "${note_parts[*]}"
   else
-    emit_result "DESTROY" "$(get_public_ip)" "" "" "destroy-noop" "No beammeup configuration detected."
+    emit_result "DESTROY" "" "" "" "destroy-noop" "No beammeup configuration detected."
   fi
 }
 

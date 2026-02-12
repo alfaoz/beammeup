@@ -4,6 +4,8 @@ set -euo pipefail
 # Build beammeup release archives for supported platforms.
 # Output files:
 #   dist/beammeup_<os>_<arch>.tar.gz
+#   dist/version.txt
+#   dist/SHA256SUMS
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT_DIR="${OUT_DIR:-${ROOT_DIR}/dist}"
@@ -42,4 +44,19 @@ for entry in "${platforms[@]}"; do
 done
 
 printf '%s\n' "${VERSION}" > "${OUT_DIR}/version.txt"
+
+# Generate checksums for installers/self-update verification.
+(
+  cd "$OUT_DIR"
+  files=(beammeup_*.tar.gz version.txt)
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "${files[@]}" > SHA256SUMS
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "${files[@]}" > SHA256SUMS
+  else
+    echo "[build] ERROR: sha256sum or shasum is required to generate SHA256SUMS" >&2
+    exit 1
+  fi
+)
+
 echo "[build] done"

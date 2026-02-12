@@ -13,6 +13,9 @@ type Options struct {
 	SSHPort          int
 	SSHUser          string
 	SSHPassword      string
+	SSHKnownHosts    string
+	StrictHostKey    bool
+	InsecureHostKey  bool
 	Protocol         string
 	HTTPMode         string
 	ProxyPort        int
@@ -50,6 +53,9 @@ func Parse(args []string) (Options, error) {
 	fs.IntVar(&opts.SSHPort, "ssh-port", opts.SSHPort, "SSH port")
 	fs.StringVar(&opts.SSHUser, "ssh-user", opts.SSHUser, "SSH user")
 	fs.StringVar(&opts.SSHPassword, "ssh-password", "", "SSH password")
+	fs.StringVar(&opts.SSHKnownHosts, "ssh-known-hosts", "", "SSH known_hosts file path")
+	fs.BoolVar(&opts.StrictHostKey, "strict-host-key", false, "Require known SSH host key (no TOFU)")
+	fs.BoolVar(&opts.InsecureHostKey, "insecure-ignore-host-key", false, "Disable SSH host key verification (UNSAFE)")
 	fs.StringVar(&opts.Protocol, "protocol", "", "http or socks5")
 	fs.StringVar(&opts.HTTPMode, "http-mode", "", "auto or sidecar")
 	fs.IntVar(&opts.ProxyPort, "proxy-port", 0, "Proxy port")
@@ -66,6 +72,9 @@ func Parse(args []string) (Options, error) {
 
 	if err := fs.Parse(args); err != nil {
 		return opts, err
+	}
+	if opts.StrictHostKey && opts.InsecureHostKey {
+		return opts, fmt.Errorf("use either --strict-host-key or --insecure-ignore-host-key, not both")
 	}
 	opts.RawArgs = fs.Args()
 	if len(opts.RawArgs) > 0 {

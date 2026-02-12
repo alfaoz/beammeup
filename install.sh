@@ -31,6 +31,49 @@ need_cmd() {
   command -v "$1" >/dev/null 2>&1 || die "$1 is required"
 }
 
+cleanup() {
+  if [[ -n "${TMP_DIR:-}" && -d "${TMP_DIR:-}" ]]; then
+    rm -rf "${TMP_DIR}"
+  fi
+}
+
+sha256_file() {
+  local path="$1"
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$path" | awk '{print $1}'
+    return
+  fi
+  if command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$path" | awk '{print $1}'
+    return
+  fi
+  if command -v openssl >/dev/null 2>&1; then
+    openssl dgst -sha256 "$path" | awk '{print $NF}'
+    return
+  fi
+  die "sha256sum, shasum, or openssl is required for checksum verification"
+}
+
+verify_sha256() {
+  local sums_file="$1"
+  local asset="$2"
+  local archive_path="$3"
+
+  local expected actual
+  expected="$(
+    awk -v a="$asset" '{
+      h=$1; f=$2;
+      gsub(/^\*/, "", f);
+      sub(/^\.\//, "", f);
+      if (f==a || f=="dist/"a) { print h; exit }
+    }' "$sums_file"
+  )"
+  [[ -n "$expected" ]] || die "SHA256SUMS missing entry for ${asset}"
+
+  actual="$(sha256_file "$archive_path")"
+  [[ "$actual" == "$expected" ]] || die "checksum mismatch for ${asset} (expected ${expected}, got ${actual})"
+}
+
 detect_platform() {
   local os_raw arch_raw
   os_raw="$(uname -s)"
@@ -69,6 +112,7 @@ resolve_download_url() {
     base="${BASE_URL%/}"
     if [[ "$VERSION" == latest ]]; then
       DOWNLOAD_URL="${base}/releases/latest/${asset}"
+      SUMS_URL="${base}/releases/latest/SHA256SUMS"
       if version_txt="$(curl -fsSL "${base}/releases/latest/version.txt" 2>/dev/null)"; then
         DISPLAY_VERSION="${version_txt#v}"
       else
@@ -77,6 +121,7 @@ resolve_download_url() {
     else
       tag="$(normalize_tag "$VERSION")"
       DOWNLOAD_URL="${base}/releases/download/${tag}/${asset}"
+      SUMS_URL="${base}/releases/download/${tag}/SHA256SUMS"
       DISPLAY_VERSION="${tag#v}"
     fi
     return
@@ -84,12 +129,14 @@ resolve_download_url() {
 
   if [[ "$VERSION" == latest ]]; then
     DOWNLOAD_URL="https://github.com/${REPO}/releases/latest/download/${asset}"
+    SUMS_URL="https://github.com/${REPO}/releases/latest/download/SHA256SUMS"
     DISPLAY_VERSION="latest"
     return
   fi
 
   tag="$(normalize_tag "$VERSION")"
   DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${tag}/${asset}"
+  SUMS_URL="https://github.com/${REPO}/releases/download/${tag}/SHA256SUMS"
   DISPLAY_VERSION="${tag#v}"
 }
 
@@ -100,7 +147,7 @@ main() {
 
   detect_platform
 
-  local asset archive_path target_path
+  local asset archive_path sums_path target_path
   asset="beammeup_${OS}_${ARCH}.tar.gz"
   resolve_download_url "$asset"
 
@@ -108,6 +155,7 @@ main() {
   TMP_DIR="$(mktemp -d 2>/dev/null || mktemp -d -t beammeup-install)"
   trap cleanup EXIT
   archive_path="${TMP_DIR}/${asset}"
+  sums_path="${TMP_DIR}/SHA256SUMS"
 
   if [[ "${DISPLAY_VERSION}" == "latest" ]]; then
     info "beaming down beammeup (latest)"
@@ -119,6 +167,12 @@ main() {
   if ! curl -fsSL "$DOWNLOAD_URL" -o "$archive_path"; then
     die "download failed (${DOWNLOAD_URL})"
   fi
+
+  info "verifying checksum (${SUMS_URL})"
+  if ! curl -fsSL "$SUMS_URL" -o "$sums_path"; then
+    die "failed to download SHA256SUMS (${SUMS_URL})"
+  fi
+  verify_sha256 "$sums_path" "$asset" "$archive_path"
 
   if ! tar -xzf "$archive_path" -C "$TMP_DIR"; then
     die "failed to extract archive"
@@ -147,8 +201,3 @@ main() {
 }
 
 main "$@"
-cleanup() {
-  if [[ -n "${TMP_DIR:-}" && -d "${TMP_DIR:-}" ]]; then
-    rm -rf "${TMP_DIR}"
-  fi
-}

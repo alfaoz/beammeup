@@ -37,6 +37,9 @@ Options:
   --ssh-port <port>             SSH port (default: 22)
   --ssh-user <username>         SSH user (default: root)
   --ssh-password <password>     SSH password
+  --ssh-known-hosts <path>      SSH known_hosts file (default: ~/.beammeup/known_hosts)
+  --strict-host-key             Require known SSH host key (no TOFU)
+  --insecure-ignore-host-key    Disable SSH host key verification (UNSAFE)
   --protocol <http|socks5>      Target protocol for show/configure actions
   --http-mode <auto|sidecar>    HTTP behavior when protocol is http
   --proxy-port <port>           Proxy port for configure/preflight
@@ -54,6 +57,9 @@ Options:
 Environment:
   BEAMMEUP_AUTO_UPDATE=1        Auto-run self-update on startup
   BEAMMEUP_SHIPS_DIR            Override ship profile directory
+  BEAMMEUP_SSH_KNOWN_HOSTS       Override SSH known_hosts file
+  BEAMMEUP_STRICT_HOST_KEY=1     Require known SSH host key (no TOFU)
+  BEAMMEUP_INSECURE_IGNORE_HOST_KEY=1  Disable SSH host key verification (UNSAFE)
 `)
 }
 
@@ -130,11 +136,15 @@ func (r *Runner) Run(opts Options) (int, error) {
 
 	password := opts.SSHPassword
 	if strings.TrimSpace(password) == "" {
-		if !term.IsTerminal(int(os.Stdin.Fd())) {
+		fd, err := stdinFD()
+		if err != nil {
+			return ExitFailure, err
+		}
+		if !term.IsTerminal(fd) {
 			return ExitUsage, errors.New("ssh password is required")
 		}
 		fmt.Printf("SSH password for %s@%s: ", ship.SSHUser, ship.Host)
-		b, err := term.ReadPassword(int(os.Stdin.Fd()))
+		b, err := term.ReadPassword(fd)
 		fmt.Println()
 		if err != nil {
 			return ExitFailure, fmt.Errorf("read password: %w", err)
@@ -377,4 +387,12 @@ func isHTTPSquidConflict(err error) bool {
 	}
 	v := strings.ToLower(err.Error())
 	return strings.Contains(v, "existing non-beammeup squid config detected")
+}
+
+func stdinFD() (int, error) {
+	fd := os.Stdin.Fd()
+	if fd > uintptr(^uint(0)>>1) {
+		return 0, errors.New("stdin file descriptor too large")
+	}
+	return int(fd), nil
 }

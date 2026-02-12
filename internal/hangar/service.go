@@ -1,7 +1,9 @@
 package hangar
 
 import (
+	"bufio"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -63,16 +65,17 @@ type ActionResult struct {
 
 type Service struct {
 	runRemoteFn func(target sshx.Target, in ActionInput) (remote.KeyValues, string, error)
+	SSH         sshx.ConnectOptions
 }
 
-func NewService() *Service { return &Service{} }
+func NewService() *Service { return &Service{SSH: sshx.DefaultConnectOptions()} }
 
 func (s *Service) runRemote(target sshx.Target, in ActionInput) (remote.KeyValues, string, error) {
 	if s.runRemoteFn != nil {
 		return s.runRemoteFn(target, in)
 	}
 
-	client, err := sshx.Connect(target)
+	client, err := sshx.ConnectWithOptions(target, s.SSH)
 	if err != nil {
 		return nil, "", fmt.Errorf("ssh connect: %w", err)
 	}
@@ -105,11 +108,75 @@ func (s *Service) runRemote(target sshx.Target, in ActionInput) (remote.KeyValue
 	out, err := client.RunCombined(cmd)
 	kv := remote.ParseBM(out)
 	if err != nil {
-		if len(kv) == 0 {
-			return nil, out, fmt.Errorf("remote command failed: %w\n%s", err, out)
+		if !hasSuccessMarker(in.Mode, kv) {
+			sanitized := sanitizeRemoteOutput(out)
+			if strings.TrimSpace(sanitized) == "" {
+				keys := redactedKeys(kv)
+				if len(keys) > 0 {
+					sanitized = "parsed keys: " + strings.Join(keys, ", ")
+				}
+			}
+			return kv, out, fmt.Errorf("remote command failed (mode=%s): %w\n%s", in.Mode, err, tailString(sanitized, 8192))
 		}
 	}
 	return kv, out, nil
+}
+
+func hasSuccessMarker(mode string, kv remote.KeyValues) bool {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "inventory":
+		return strings.TrimSpace(kv.Get("BM_PUBLIC_IP")) != ""
+	case "preflight":
+		return strings.TrimSpace(kv.Get("BM_PREFLIGHT")) == "OK"
+	case "show", "apply", "destroy":
+		return strings.TrimSpace(kv.Get("BM_RESULT_PROTOCOL")) != ""
+	default:
+		return false
+	}
+}
+
+func sanitizeRemoteOutput(out string) string {
+	// Strip BM_ key/value lines to avoid leaking credentials in error messages.
+	var b strings.Builder
+	s := bufio.NewScanner(strings.NewReader(out))
+	for s.Scan() {
+		line := strings.TrimRight(s.Text(), "\r")
+		if strings.HasPrefix(strings.TrimSpace(line), "BM_") {
+			continue
+		}
+		b.WriteString(line)
+		b.WriteByte('\n')
+	}
+	if b.Len() == 0 {
+		return ""
+	}
+	return strings.TrimSpace(b.String())
+}
+
+func tailString(s string, max int) string {
+	if max <= 0 || len(s) <= max {
+		return s
+	}
+	if max < 80 {
+		max = 80
+	}
+	return strings.TrimSpace("[...output truncated...]\n" + s[len(s)-max:])
+}
+
+func redactedKeys(kv remote.KeyValues) []string {
+	if len(kv) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(kv))
+	for k := range kv {
+		if strings.Contains(strings.ToUpper(k), "PASS") {
+			continue
+		}
+		keys = append(keys, k)
+	}
+	// Keep stable output for debugging.
+	sort.Strings(keys)
+	return keys
 }
 
 func shellJoin(parts []string) string {
