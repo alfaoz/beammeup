@@ -203,6 +203,9 @@ func (r *Runner) Run(opts Options) (int, error) {
 
 	res, err := r.Hangar.Execute(ship, password, in)
 	if err != nil {
+		if isHTTPSquidConflict(err) && in.Mode == "apply" && strings.EqualFold(in.Protocol, "http") {
+			return ExitFailure, fmt.Errorf("%w\nhint: this host already has its own squid config. retry with --protocol socks5 --proxy-port 18080", err)
+		}
 		return ExitFailure, err
 	}
 
@@ -348,4 +351,12 @@ func readLine() string {
 	reader := bufio.NewReader(os.Stdin)
 	line, _ := reader.ReadString('\n')
 	return strings.TrimSpace(line)
+}
+
+func isHTTPSquidConflict(err error) bool {
+	if err == nil {
+		return false
+	}
+	v := strings.ToLower(err.Error())
+	return strings.Contains(v, "existing non-beammeup squid config detected")
 }

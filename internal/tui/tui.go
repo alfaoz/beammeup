@@ -284,6 +284,17 @@ func (a *App) hangarMenu(ship ships.Ship) error {
 				if errors.Is(err, errUserCancelled) {
 					continue
 				}
+				handled, updated, fallbackErr := a.handleHTTPConflictWithSocksFallback(ship, protocol, err)
+				if handled {
+					if fallbackErr != nil {
+						return fallbackErr
+					}
+					ship = updated
+					if inv, invErr := a.inventoryWithPassword(ship); invErr == nil {
+						a.status[ship.Name] = inv.HangarStatus
+					}
+					continue
+				}
 				return err
 			}
 			a.showResultCard(res)
@@ -395,6 +406,10 @@ func (a *App) ensureHangarCreated(ship ships.Ship, forcePrompt bool) error {
 			NoFirewallChange: ship.NoFirewallChange,
 		})
 		if err != nil {
+			handled, _, fallbackErr := a.handleHTTPConflictWithSocksFallback(ship, protocol, err)
+			if handled {
+				return fallbackErr
+			}
 			return err
 		}
 		a.status[ship.Name] = hangar.StatusOnline
@@ -617,6 +632,55 @@ func (a *App) note(title, body string) {
 	_ = huh.NewNote().Title(title).Description(body).Next(true).Run()
 }
 
+func (a *App) handleHTTPConflictWithSocksFallback(ship ships.Ship, requestedProtocol string, cause error) (bool, ships.Ship, error) {
+	if strings.ToLower(strings.TrimSpace(requestedProtocol)) != "http" {
+		return false, ship, nil
+	}
+	if !isExternalSquidConflict(cause) {
+		return false, ship, nil
+	}
+
+	if !a.confirm("HTTP setup is blocked by an existing Squid config. Switch this ship to SOCKS5 instead?") {
+		return true, ship, cause
+	}
+
+	ports := fallbackSocksPorts(ship.ProxyPort)
+	var lastErr error
+	for _, p := range ports {
+		res, err := a.execWithPassword(ship, hangar.ActionInput{
+			Mode:             "apply",
+			Protocol:         "socks5",
+			ProxyPort:        p,
+			NoFirewallChange: ship.NoFirewallChange,
+		})
+		if err != nil {
+			lastErr = err
+			if isPortBusyError(err) {
+				continue
+			}
+			return true, ship, err
+		}
+
+		updated := ship
+		updated.Protocol = "socks5"
+		updated.ProxyPort = p
+		saved, saveErr := a.Store.Save(updated)
+		if saveErr != nil {
+			return true, ship, saveErr
+		}
+
+		a.status[saved.Name] = hangar.StatusOnline
+		a.note("HTTP preserved", "existing Squid config was left untouched. beammeup set up SOCKS5 for this ship.")
+		a.showResultCard(res)
+		return true, saved, nil
+	}
+
+	if lastErr != nil {
+		return true, ship, lastErr
+	}
+	return true, ship, fmt.Errorf("unable to create SOCKS5 fallback")
+}
+
 func (a *App) shipSummaryLines(shipNames []string) string {
 	lines := []string{"select a ship to open cockpit"}
 	for _, name := range shipNames {
@@ -631,6 +695,46 @@ func isUserCancelled(err error) bool {
 	}
 	v := strings.ToLower(err.Error())
 	return strings.Contains(v, "interrupt") || strings.Contains(v, "cancel") || strings.Contains(v, "abort")
+}
+
+func isExternalSquidConflict(err error) bool {
+	if err == nil {
+		return false
+	}
+	v := strings.ToLower(err.Error())
+	return strings.Contains(v, "existing non-beammeup squid config detected")
+}
+
+func isPortBusyError(err error) bool {
+	if err == nil {
+		return false
+	}
+	v := strings.ToLower(err.Error())
+	return strings.Contains(v, "already in use")
+}
+
+func fallbackSocksPorts(current int) []int {
+	candidates := []int{}
+	add := func(v int) {
+		if v <= 0 {
+			return
+		}
+		for _, have := range candidates {
+			if have == v {
+				return
+			}
+		}
+		candidates = append(candidates, v)
+	}
+
+	if current > 0 && current != 18181 {
+		add(current)
+	}
+	add(18080)
+	add(1080)
+	add(28080)
+	add(38080)
+	return candidates
 }
 
 func fallback(v, d string) string {
