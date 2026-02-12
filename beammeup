@@ -7,7 +7,7 @@ DEFAULT_SOCKS_PORT=1080
 DEFAULT_HTTP_PORT=18181
 DEFAULT_BASE_URL="https://beammeup.pw"
 DEFAULT_SHIPS_DIR="${HOME:-.}/.beammeup/ships"
-BEAMMEUP_VERSION="1.4.0"
+BEAMMEUP_VERSION="1.4.1"
 USE_TUI=0
 
 info() {
@@ -31,85 +31,63 @@ box_line() {
 }
 
 require_tui() {
-  command -v dialog >/dev/null 2>&1 || die "Interactive mode requires 'dialog'. Install it first (macOS: brew install dialog, Debian/Ubuntu: apt-get install dialog)."
+  command -v gum >/dev/null 2>&1 || die "Interactive mode requires 'gum'. Install it first (macOS: brew install gum, Debian/Ubuntu: apt-get install gum)."
 }
 
 tui_input() {
   local title="$1"
   local prompt="$2"
   local initial="${3:-}"
-  local tmp
-  tmp="$(mktemp -t beammeup-dialog.XXXXXX)"
-  if dialog --clear \
-    --backtitle "beammeup v${BEAMMEUP_VERSION}" \
-    --title "$title" \
-    --inputbox "$prompt" 12 80 "$initial" 2>"$tmp"; then
-    cat "$tmp"
-    rm -f "$tmp"
-    return 0
+  local result=""
+  if [[ -n "$initial" ]]; then
+    result="$(gum input --header "${title}" --prompt "${prompt}: " --value "$initial")" || return 1
+  else
+    result="$(gum input --header "${title}" --prompt "${prompt}: ")" || return 1
   fi
-  rm -f "$tmp"
-  return 1
+  printf '%s' "$result"
+  return 0
 }
 
 tui_password() {
   local title="$1"
   local prompt="$2"
-  local tmp
-  tmp="$(mktemp -t beammeup-dialog.XXXXXX)"
-  if dialog --clear \
-    --backtitle "beammeup v${BEAMMEUP_VERSION}" \
-    --title "$title" \
-    --insecure \
-    --passwordbox "$prompt" 12 80 2>"$tmp"; then
-    cat "$tmp"
-    rm -f "$tmp"
-    return 0
-  fi
-  rm -f "$tmp"
-  return 1
+  gum input --header "${title}" --prompt "${prompt}: " --password
 }
 
 tui_menu() {
   local title="$1"
   local prompt="$2"
   shift 2
-  local tmp
-  tmp="$(mktemp -t beammeup-dialog.XXXXXX)"
-  if dialog --clear \
-    --backtitle "beammeup v${BEAMMEUP_VERSION}" \
-    --title "$title" \
-    --menu "$prompt" 20 90 10 "$@" 2>"$tmp"; then
-    cat "$tmp"
-    rm -f "$tmp"
-    return 0
-  fi
-  rm -f "$tmp"
-  return 1
+  local lines=()
+  local key desc choice
+  while [[ $# -ge 2 ]]; do
+    key="$1"
+    desc="$2"
+    lines+=("${key}"$'\t'"${desc}")
+    shift 2
+  done
+  [[ "${#lines[@]}" -gt 0 ]] || return 1
+  choice="$(printf '%s\n' "${lines[@]}" | gum choose --header "${title} :: ${prompt}")" || return 1
+  printf '%s' "${choice%%$'\t'*}"
 }
 
 tui_yesno() {
-  local title="$1"
+  local _title="$1"
   local prompt="$2"
   local default_answer="$3"
-  local default_flag=()
   if [[ "$default_answer" =~ ^[Nn]$ ]]; then
-    default_flag+=(--defaultno)
+    gum confirm --default=false "$prompt"
+    return $?
   fi
-  dialog --clear \
-    --backtitle "beammeup v${BEAMMEUP_VERSION}" \
-    --title "$title" \
-    "${default_flag[@]}" \
-    --yesno "$prompt" 10 80
+  gum confirm --default=true "$prompt"
 }
 
 tui_msg() {
   local title="$1"
   local message="$2"
-  dialog --clear \
-    --backtitle "beammeup v${BEAMMEUP_VERSION}" \
-    --title "$title" \
-    --msgbox "$message" 12 80
+  gum style --border rounded --padding "1 2" --margin "1 0" --foreground 212 "${title}"
+  gum style --padding "0 1" "$message"
+  gum input --prompt "press enter to continue > " --value "" >/dev/null || true
 }
 
 print_help() {

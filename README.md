@@ -11,7 +11,7 @@ a local install-only cli that:
 - supports inventory, show, configure/repair, rotate credentials, and preflight checks
 - stores reusable ship profiles in `~/.beammeup/ships/*.ship`
 - never stores ssh passwords in ship files
-- runs a full `dialog`-based tui wizard for interactive use
+- runs a full `gum`-based tui wizard for interactive use
 
 ### what are ships?
 
@@ -32,7 +32,8 @@ beammeup
 ```
 
 installer behavior:
-- installs `dialog` automatically when possible (brew/apt/dnf/yum/pacman/zypper/apk)
+- installs `gum` automatically when possible (brew/apt/dnf/yum/pacman/zypper/apk)
+- falls back to direct `gum` binary install when package manager install is unavailable
 
 ## how it works
 

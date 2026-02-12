@@ -9,11 +9,11 @@ set -euo pipefail
 # Optional env vars:
 #   BEAMMEUP_BASE_URL    (default: https://beammeup.pw)
 #   BEAMMEUP_INSTALL_DIR (default: $HOME/.local/bin)
-#   BEAMMEUP_VERSION     (default: 1.4.0)
+#   BEAMMEUP_VERSION     (default: 1.4.1)
 
 BASE_URL="${BEAMMEUP_BASE_URL:-https://beammeup.pw}"
 INSTALL_DIR="${BEAMMEUP_INSTALL_DIR:-$HOME/.local/bin}"
-VERSION="${BEAMMEUP_VERSION:-1.4.0}"
+VERSION="${BEAMMEUP_VERSION:-1.4.1}"
 TARGET="${INSTALL_DIR}/beammeup"
 SOURCE_URL="${BASE_URL%/}/beammeup"
 
@@ -38,35 +38,91 @@ run_with_privilege() {
   return 1
 }
 
-install_dialog() {
-  if command -v dialog >/dev/null 2>&1; then
-    info "dialog already installed"
+install_gum_binary() {
+  local os_name arch_name latest_tag version tarball url tmp_dir
+  local os_raw arch_raw
+
+  os_raw="$(uname -s)"
+  arch_raw="$(uname -m)"
+
+  case "$os_raw" in
+    Linux) os_name="Linux" ;;
+    Darwin) os_name="Darwin" ;;
+    *)
+      return 1
+      ;;
+  esac
+
+  case "$arch_raw" in
+    x86_64|amd64) arch_name="x86_64" ;;
+    arm64|aarch64) arch_name="arm64" ;;
+    *)
+      return 1
+      ;;
+  esac
+
+  latest_tag="$(
+    curl -fsSL https://api.github.com/repos/charmbracelet/gum/releases/latest \
+      | sed -n 's/.*"tag_name":[[:space:]]*"\([^"]*\)".*/\1/p' \
+      | head -n 1
+  )"
+  [[ -n "$latest_tag" ]] || return 1
+  version="${latest_tag#v}"
+
+  tarball="gum_${version}_${os_name}_${arch_name}.tar.gz"
+  url="https://github.com/charmbracelet/gum/releases/download/${latest_tag}/${tarball}"
+
+  tmp_dir="$(mktemp -d -t gum-install.XXXXXX)"
+  trap 'rm -rf "$tmp_dir"' RETURN
+
+  curl -fsSL "$url" -o "${tmp_dir}/${tarball}" || return 1
+  tar -xzf "${tmp_dir}/${tarball}" -C "$tmp_dir" || return 1
+
+  mkdir -p "$INSTALL_DIR"
+  mv "${tmp_dir}/gum" "${INSTALL_DIR}/gum" || return 1
+  chmod +x "${INSTALL_DIR}/gum"
+  export PATH="${INSTALL_DIR}:$PATH"
+  trap - RETURN
+  rm -rf "$tmp_dir"
+}
+
+install_gum() {
+  if command -v gum >/dev/null 2>&1; then
+    info "gum already installed"
     return 0
   fi
 
-  info "installing dialog for full tui mode..."
+  info "installing gum for full tui mode..."
 
   if command -v brew >/dev/null 2>&1; then
-    brew install dialog || die "failed to install dialog with brew. Run: brew install dialog"
+    brew install gum >/dev/null 2>&1 || true
   elif command -v apt-get >/dev/null 2>&1; then
-    run_with_privilege apt-get update || die "failed to run apt-get update. Run manually: sudo apt-get update"
-    run_with_privilege apt-get install -y dialog || die "failed to install dialog. Run manually: sudo apt-get install -y dialog"
+    run_with_privilege apt-get update >/dev/null 2>&1 || true
+    run_with_privilege apt-get install -y gum >/dev/null 2>&1 || true
   elif command -v dnf >/dev/null 2>&1; then
-    run_with_privilege dnf install -y dialog || die "failed to install dialog. Run manually: sudo dnf install -y dialog"
+    run_with_privilege dnf install -y gum >/dev/null 2>&1 || true
   elif command -v yum >/dev/null 2>&1; then
-    run_with_privilege yum install -y dialog || die "failed to install dialog. Run manually: sudo yum install -y dialog"
+    run_with_privilege yum install -y gum >/dev/null 2>&1 || true
   elif command -v pacman >/dev/null 2>&1; then
-    run_with_privilege pacman -Sy --noconfirm dialog || die "failed to install dialog. Run manually: sudo pacman -Sy --noconfirm dialog"
+    run_with_privilege pacman -Sy --noconfirm gum >/dev/null 2>&1 || true
   elif command -v zypper >/dev/null 2>&1; then
-    run_with_privilege zypper --non-interactive install dialog || die "failed to install dialog. Run manually: sudo zypper --non-interactive install dialog"
+    run_with_privilege zypper --non-interactive install gum >/dev/null 2>&1 || true
   elif command -v apk >/dev/null 2>&1; then
-    run_with_privilege apk add dialog || die "failed to install dialog. Run manually: sudo apk add dialog"
-  else
-    die "dialog not found and no supported package manager detected. Install dialog manually, then run beammeup."
+    run_with_privilege apk add gum >/dev/null 2>&1 || true
   fi
 
-  command -v dialog >/dev/null 2>&1 || die "dialog install finished but command is still missing."
-  info "dialog ready"
+  if command -v gum >/dev/null 2>&1; then
+    info "gum ready"
+    return 0
+  fi
+
+  info "package manager install unavailable; trying direct binary install..."
+  if install_gum_binary && command -v gum >/dev/null 2>&1; then
+    info "gum ready"
+    return 0
+  fi
+
+  die "failed to install gum automatically. Install manually: https://github.com/charmbracelet/gum"
 }
 
 command -v curl >/dev/null 2>&1 || die "curl is required"
@@ -89,7 +145,7 @@ fi
 mv "$TMP_FILE" "$TARGET"
 chmod +x "$TARGET"
 
-install_dialog
+install_gum
 
 info "transport complete"
 info "installed to ${TARGET}"
