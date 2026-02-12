@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>beammeup</title>
+  <style>
+    :root {
+      --bg: #070807;
+      --panel: #0d120d;
+      --line: #2b3f2f;
+      --text: #bdf8bf;
+      --muted: #86b88a;
+      --accent: #6ef59a;
+      --danger: #ff8a8a;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      background:
+        radial-gradient(circle at 20% 15%, rgba(64, 110, 72, 0.2), transparent 40%),
+        radial-gradient(circle at 80% 90%, rgba(60, 110, 88, 0.14), transparent 36%),
+        var(--bg);
+      color: var(--text);
+      font-family: "JetBrains Mono", "IBM Plex Mono", "Cascadia Code", Menlo, Monaco, Consolas, monospace;
+    }
+
+    .term {
+      width: min(920px, 100%);
+      border: 1px solid var(--line);
+      background: linear-gradient(180deg, rgba(29, 45, 32, 0.35), transparent 20%), var(--panel);
+      box-shadow: 0 0 0 1px rgba(8, 15, 9, 0.9), 0 20px 60px rgba(0, 0, 0, 0.45);
+      border-radius: 10px;
+      overflow: hidden;
+    }
+
+    .bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(33, 53, 35, 0.35);
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .lights {
+      display: inline-flex;
+      gap: 6px;
+    }
+
+    .dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+    }
+
+    .dot:nth-child(1) { background: #ff837d; }
+    .dot:nth-child(2) { background: #ffdb7d; }
+    .dot:nth-child(3) { background: #72f0a3; }
+
+    .body {
+      padding: 16px;
+      font-size: 14px;
+      line-height: 1.35;
+    }
+
+    pre {
+      margin: 0;
+      white-space: pre;
+      overflow-x: auto;
+      color: var(--text);
+    }
+
+    .row {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px;
+      align-items: center;
+      margin-top: 14px;
+      padding: 10px;
+      border: 1px dashed var(--line);
+      border-radius: 8px;
+      background: rgba(8, 14, 9, 0.65);
+    }
+
+    code {
+      display: block;
+      overflow-x: auto;
+      color: var(--accent);
+      font-size: 13px;
+      white-space: nowrap;
+    }
+
+    button {
+      border: 1px solid var(--line);
+      background: #152518;
+      color: var(--text);
+      font: inherit;
+      font-size: 13px;
+      padding: 8px 12px;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: transform 100ms ease, background 120ms ease, border-color 120ms ease;
+    }
+
+    button:hover {
+      transform: translateY(-1px);
+      border-color: #4f8a5b;
+      background: #1b3120;
+    }
+
+    button:active {
+      transform: translateY(0);
+    }
+
+    .foot {
+      margin-top: 12px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .ok { color: var(--accent); }
+    .err { color: var(--danger); }
+
+    @media (max-width: 720px) {
+      .body {
+        font-size: 12px;
+      }
+
+      .row {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="term" role="main">
+    <div class="bar">
+      <span class="lights" aria-hidden="true"><span class="dot"></span><span class="dot"></span><span class="dot"></span></span>
+      <span>beammeup.pw :: command deck</span>
+    </div>
+
+    <section class="body">
+      <pre>______                                                                             
+___  /____________ _______ __________ ____________  _________   ___________      __
+__  __ \  _ \  __ `/_  __ `__ \_  __ `__ \  _ \  / / /__  __ \  ___  __ \_ | /| / /
+_  /_/ /  __/ /_/ /_  / / / / /  / / / / /  __/ /_/ /__  /_/ /____  /_/ /_ |/ |/ / 
+/_.___/\___/\__,_/ /_/ /_/ /_//_/ /_/ /_/\___/\__,_/ _  .___/_(_)  .___/____/|__/  
+                                                     /_/        /_/                 </pre>
+
+      <div class="row">
+        <code id="cmd">curl -fsSL https://beammeup.pw/install.sh | bash</code>
+        <button id="copyBtn" type="button" aria-label="Copy install command">Copy Command</button>
+      </div>
+
+      <div class="foot">
+        <pre>$ beammeup
+[beammeup] welcome aboard
+[beammeup] launch your first ship</pre>
+        <p id="status" class="ok" aria-live="polite"></p>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    (function () {
+      var btn = document.getElementById("copyBtn");
+      var status = document.getElementById("status");
+      var command = document.getElementById("cmd").textContent.trim();
+
+      function setStatus(message, isError) {
+        status.textContent = message;
+        status.className = isError ? "err" : "ok";
+      }
+
+      btn.addEventListener("click", async function () {
+        try {
+          await navigator.clipboard.writeText(command);
+          setStatus("Copied. Paste it in your terminal and launch.");
+        } catch (err) {
+          var area = document.createElement("textarea");
+          area.value = command;
+          area.style.position = "fixed";
+          area.style.opacity = "0";
+          document.body.appendChild(area);
+          area.focus();
+          area.select();
+          try {
+            document.execCommand("copy");
+            setStatus("Copied. Paste it in your terminal and launch.");
+          } catch (fallbackErr) {
+            setStatus("Copy failed. Select and copy the command manually.", true);
+          } finally {
+            document.body.removeChild(area);
+          }
+        }
+      });
+    })();
+  </script>
+</body>
+</html>
