@@ -46,10 +46,7 @@ func (a *App) Run() error {
 			continue
 		}
 
-		description := "persistent cockpit"
-		if lines := a.shipSummaryLines(shipNames); lines != "" {
-			description = lines
-		}
+		description := a.mainDeckDescription(shipNames)
 
 		choice := ""
 		if err := huh.NewSelect[string]().
@@ -133,7 +130,7 @@ func (a *App) onboardNoShips() error {
 	choice := ""
 	if err := huh.NewSelect[string]().
 		Title("welcome aboard").
-		Description("you have no ships yet").
+		Description(logoText()+"\n\nyou have no ships yet").
 		Options(
 			huh.NewOption("Create Ship", "create"),
 			huh.NewOption("Exit", "exit"),
@@ -163,6 +160,14 @@ func (a *App) onboardNoShips() error {
 		a.note("hangar setup failed", err.Error())
 	}
 	return nil
+}
+
+func (a *App) mainDeckDescription(shipNames []string) string {
+	lines := a.shipSummaryLines(shipNames)
+	if strings.TrimSpace(lines) == "" {
+		lines = "persistent cockpit"
+	}
+	return logoText() + "\n\n" + lines
 }
 
 func (a *App) shipCockpit(ship ships.Ship) error {
