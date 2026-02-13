@@ -18,6 +18,7 @@ const (
 	StatusOnline  Status = "online"
 	StatusMissing Status = "missing"
 	StatusDrift   Status = "drift"
+	StatusBlinded Status = "blinded"
 )
 
 type ProtocolState struct {
@@ -40,12 +41,15 @@ type Inventory struct {
 }
 
 type ActionInput struct {
-	Mode              string // inventory|show|preflight|apply|destroy
-	Protocol          string // http|socks5
-	HTTPMode          string // auto|sidecar
-	ProxyPort         int
-	NoFirewallChange  bool
-	RotateCredentials bool
+	Mode                    string // inventory|show|preflight|apply|destroy
+	Protocol                string // http|socks5
+	HTTPMode                string // auto|sidecar
+	ProxyPort               int
+	NoFirewallChange        bool
+	ListenLocal             bool
+	SmartBlinder            bool
+	SmartBlinderIdleMinutes int
+	RotateCredentials       bool
 }
 
 type ActionResult struct {
@@ -99,6 +103,19 @@ func (s *Service) runRemote(target sshx.Target, in ActionInput) (remote.KeyValue
 	}
 	if in.NoFirewallChange {
 		args = append(args, "--no-firewall-change")
+	}
+	if in.ListenLocal {
+		args = append(args, "--listen-local")
+	}
+	if in.Mode == "apply" || in.Mode == "destroy" || in.Mode == "preflight" {
+		if in.SmartBlinder {
+			args = append(args, "--smart-blinder")
+		} else {
+			args = append(args, "--no-smart-blinder")
+		}
+		if in.SmartBlinderIdleMinutes > 0 {
+			args = append(args, "--smart-blinder-idle-minutes", fmt.Sprintf("%d", in.SmartBlinderIdleMinutes))
+		}
 	}
 	if in.RotateCredentials {
 		args = append(args, "--rotate-credentials")

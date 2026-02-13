@@ -47,6 +47,9 @@ Options:
   --show-inventory              List detected beammeup setups and exit
   --preflight-only              Run checks only, make no remote changes
   --no-firewall-change          Do not add firewall rules on the VPS
+  --listen-local                Bind proxy to localhost on the VPS (requires SSH tunnel)
+  --smart-blinder               Smart blinder (default: true). Disable with --smart-blinder=false
+  --smart-blinder-idle-minutes  Smart blinder idle minutes (default: 10)
   --self-update                 Update local beammeup binary and exit
   --auto-update                 Update local beammeup before running requested action
   --base-url <https-url>        Override release base URL
@@ -68,7 +71,8 @@ func RequiresNonInteractive(opts Options, isTTY bool) bool {
 		return true
 	}
 	return opts.Host != "" || opts.ShipName != "" || opts.Action != "" || opts.ShowInventory || opts.PreflightOnly ||
-		opts.NoFirewallChange || opts.Protocol != "" || opts.HTTPMode != "" || opts.ProxyPort > 0 || opts.Yes
+		opts.NoFirewallChange || opts.ListenLocalSet || opts.SmartBlinderSet || opts.SmartBlinderIdleMinSet ||
+		opts.Protocol != "" || opts.HTTPMode != "" || opts.ProxyPort > 0 || opts.Yes
 }
 
 func (r *Runner) Run(opts Options) (int, error) {
@@ -94,12 +98,14 @@ func (r *Runner) Run(opts Options) (int, error) {
 	}
 
 	var ship ships.Ship
+	loadedFromStore := false
 	if opts.ShipName != "" {
 		loaded, err := r.Store.Load(opts.ShipName)
 		if err != nil {
 			return ExitFailure, err
 		}
 		ship = loaded
+		loadedFromStore = true
 	}
 
 	if opts.Host != "" {
@@ -122,6 +128,26 @@ func (r *Runner) Run(opts Options) (int, error) {
 	}
 	if opts.NoFirewallChange {
 		ship.NoFirewallChange = true
+	}
+
+	if loadedFromStore {
+		if opts.ListenLocalSet {
+			ship.ListenLocal = opts.ListenLocal
+		}
+		if opts.SmartBlinderSet {
+			ship.SmartBlinder = opts.SmartBlinder
+		}
+		if opts.SmartBlinderIdleMinSet {
+			ship.SmartBlinderIdleMinutes = opts.SmartBlinderIdleMinutes
+		}
+	} else {
+		ship.ListenLocal = opts.ListenLocal
+		ship.SmartBlinder = opts.SmartBlinder
+		ship.SmartBlinderIdleMinutes = opts.SmartBlinderIdleMinutes
+	}
+
+	if ship.SmartBlinder && ship.SmartBlinderIdleMinutes <= 0 {
+		ship.SmartBlinderIdleMinutes = 10
 	}
 	if ship.SSHPort == 0 {
 		ship.SSHPort = 22
@@ -221,6 +247,11 @@ func (r *Runner) Run(opts Options) (int, error) {
 		in.ProxyPort = resolveProxyPort(ship, inv)
 		in.NoFirewallChange = ship.NoFirewallChange
 	}
+	if in.Mode == "apply" || in.Mode == "preflight" {
+		in.ListenLocal = ship.ListenLocal
+		in.SmartBlinder = ship.SmartBlinder
+		in.SmartBlinderIdleMinutes = ship.SmartBlinderIdleMinutes
+	}
 
 	res, err := r.Hangar.Execute(ship, password, in)
 	if err != nil {
@@ -251,15 +282,28 @@ func (r *Runner) Run(opts Options) (int, error) {
 		return ExitSuccess, nil
 	}
 
+	proxyHost := res.Host
+	proxyPort := res.Port
+	if ship.ListenLocal {
+		proxyHost = "127.0.0.1"
+	}
+
 	fmt.Printf("\nbeammeup %s complete (%s).\n", res.Action, res.Protocol)
 	fmt.Println("Connection details:")
-	fmt.Printf("  Host: %s\n", res.Host)
-	fmt.Printf("  Port: %s\n", res.Port)
+	fmt.Printf("  Host: %s\n", proxyHost)
+	fmt.Printf("  Port: %s\n", proxyPort)
 	if strings.EqualFold(res.Protocol, "HTTP") {
 		fmt.Printf("  HTTP mode: %s\n", fallback(res.HTTPMode, "managed"))
 	}
 	fmt.Printf("  Username: %s\n", fallback(res.User, "<not available>"))
 	fmt.Printf("  Password: %s\n", fallback(res.Pass, "<not retrievable>"))
+	if ship.ListenLocal && proxyPort != "" {
+		sshCmd := fmt.Sprintf("ssh -N -o ExitOnForwardFailure=yes -L %s:127.0.0.1:%s %s@%s -p %d", proxyPort, proxyPort, ship.SSHUser, ship.Host, ship.SSHPort)
+		if ship.SSHPort == 22 {
+			sshCmd = fmt.Sprintf("ssh -N -o ExitOnForwardFailure=yes -L %s:127.0.0.1:%s %s@%s", proxyPort, proxyPort, ship.SSHUser, ship.Host)
+		}
+		fmt.Printf("\nSSH tunnel required (keep it running):\n  %s\n", sshCmd)
+	}
 
 	if res.FirewallNote != "" {
 		fmt.Printf("\nFirewall note: %s\n", res.FirewallNote)
@@ -271,16 +315,16 @@ func (r *Runner) Run(opts Options) (int, error) {
 	fmt.Println("\n[beammeup] jump successful.")
 	fmt.Println("\nChrome extension setup:")
 	if strings.EqualFold(res.Protocol, "HTTP") {
-		fmt.Printf("  Type: HTTP proxy\n  Server: %s\n  Port: %s\n", res.Host, res.Port)
+		fmt.Printf("  Type: HTTP proxy\n  Server: %s\n  Port: %s\n", proxyHost, proxyPort)
 		fmt.Println("  Enter username/password when prompted")
 		if res.Pass != "" {
-			fmt.Printf("\nQuick test:\n  curl -x 'http://%s:%s@%s:%s' https://api.ipify.org\n", res.User, res.Pass, res.Host, res.Port)
+			fmt.Printf("\nQuick test:\n  curl -x 'http://%s:%s@%s:%s' https://api.ipify.org\n", res.User, res.Pass, proxyHost, proxyPort)
 		}
 	} else {
-		fmt.Printf("  Type: SOCKS5\n  Server: %s\n  Port: %s\n", res.Host, res.Port)
+		fmt.Printf("  Type: SOCKS5\n  Server: %s\n  Port: %s\n", proxyHost, proxyPort)
 		fmt.Println("  Username/Password: use values above")
 		if res.Pass != "" {
-			fmt.Printf("\nQuick test:\n  curl -x 'socks5h://%s:%s@%s:%s' https://api.ipify.org\n", res.User, res.Pass, res.Host, res.Port)
+			fmt.Printf("\nQuick test:\n  curl -x 'socks5h://%s:%s@%s:%s' https://api.ipify.org\n", res.User, res.Pass, proxyHost, proxyPort)
 		}
 	}
 
@@ -325,6 +369,9 @@ func resolveProxyPort(ship ships.Ship, inv hangar.Inventory) int {
 
 func printInventorySummary(inv hangar.Inventory) {
 	fmt.Println("\n[ship-scan] detected beammeup setups on target:")
+	if inv.HangarStatus != "" {
+		fmt.Printf("  Hangar: %s\n", inv.HangarStatus)
+	}
 	if inv.Socks5.Exists {
 		state := "inactive"
 		if inv.Socks5.Active {

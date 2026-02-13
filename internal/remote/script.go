@@ -19,6 +19,21 @@ is_valid_port() {
   (( port >= 1 && port <= 65535 ))
 }
 
+is_valid_positive_int() {
+  local v="$1"
+  [[ "$v" =~ ^[0-9]+$ ]] || return 1
+  (( v > 0 ))
+}
+
+extract_port() {
+  local raw="$1"
+  raw="$(printf '%s' "$raw" | tr -d '[:space:]')"
+  if [[ "$raw" == *":"* ]]; then
+    raw="${raw##*:}"
+  fi
+  printf '%s' "$raw"
+}
+
 generate_secret() {
   local charset="$1"
   local len="$2"
@@ -192,6 +207,209 @@ cleanup_firewall_rule() {
   fi
 }
 
+disable_smart_blinder() {
+  if service_defined "$BLINDER_TIMER"; then
+    systemctl disable --now "$BLINDER_TIMER" >/dev/null 2>&1 || true
+  fi
+  if service_defined "$BLINDER_SERVICE"; then
+    systemctl stop "$BLINDER_SERVICE" >/dev/null 2>&1 || true
+  fi
+  rm -f "$BLINDER_ENV" "$BLINDER_LAST" "$BLINDER_STATE" "$BLINDER_SCRIPT" "$BLINDER_SERVICE_FILE" "$BLINDER_TIMER_FILE"
+  systemctl daemon-reload
+}
+
+enable_smart_blinder() {
+  local idle_min="$1"
+  if ! is_valid_positive_int "$idle_min"; then
+    idle_min=10
+  fi
+  local idle_seconds=$((idle_min * 60))
+
+  mkdir -p "$BEAM_DIR"
+
+  cat >"$BLINDER_ENV" <<EOF_ENV
+IDLE_SECONDS=$idle_seconds
+EOF_ENV
+  chmod 600 "$BLINDER_ENV"
+
+  cat >"$BLINDER_SCRIPT" <<'EOF_BLINDER'
+#!/usr/bin/env bash
+set -euo pipefail
+
+BEAM_DIR="/etc/beammeup"
+BLINDER_ENV="${BEAM_DIR}/smart-blinder.env"
+BLINDER_LAST="${BEAM_DIR}/smart-blinder.last"
+BLINDER_STATE="${BEAM_DIR}/smart-blinder.state"
+SOCKS_ENV="${BEAM_DIR}/microsocks.env"
+HTTP_ENV="${BEAM_DIR}/http.env"
+HTTP_SIDECAR_LOG="/var/log/beammeup-http/access.log"
+HTTP_MANAGED_LOG="/var/log/squid/access.log"
+
+read_env_value() {
+  local file="$1"
+  local key="$2"
+  [[ -f "$file" ]] || return 1
+  grep -m1 "^${key}=" "$file" | cut -d= -f2- || true
+}
+
+service_defined() {
+  local unit="$1"
+  systemctl cat "$unit" >/dev/null 2>&1
+}
+
+service_active() {
+  local unit="$1"
+  systemctl is-active --quiet "$unit" 2>/dev/null
+}
+
+mtime_epoch() {
+  local file="$1"
+  [[ -f "$file" ]] || { echo 0; return; }
+  if stat -c %Y "$file" >/dev/null 2>&1; then
+    stat -c %Y "$file" 2>/dev/null || echo 0
+    return
+  fi
+  stat -f %m "$file" 2>/dev/null || echo 0
+}
+
+max() {
+  local a="$1"
+  local b="$2"
+  if (( a >= b )); then
+    echo "$a"
+  else
+    echo "$b"
+  fi
+}
+
+port_has_activity() {
+  local port="$1"
+  [[ -n "$port" ]] || return 1
+  if command -v ss >/dev/null 2>&1; then
+    ss -Hant "( sport = :$port )" 2>/dev/null | grep -q .
+    return $?
+  fi
+  return 1
+}
+
+now="$(date +%s)"
+
+idle_seconds="$(read_env_value "$BLINDER_ENV" IDLE_SECONDS || true)"
+if ! [[ "${idle_seconds:-}" =~ ^[0-9]+$ ]] || (( idle_seconds <= 0 )); then
+  idle_seconds=600
+fi
+
+last=0
+if [[ -f "$BLINDER_LAST" ]]; then
+  last="$(cat "$BLINDER_LAST" 2>/dev/null || echo 0)"
+fi
+if ! [[ "${last:-}" =~ ^[0-9]+$ ]]; then
+  last=0
+fi
+if (( last <= 0 )); then
+  last="$now"
+fi
+
+log_mtime=0
+log_mtime="$(max "$log_mtime" "$(mtime_epoch "$HTTP_SIDECAR_LOG")")"
+log_mtime="$(max "$log_mtime" "$(mtime_epoch "$HTTP_MANAGED_LOG")")"
+if (( log_mtime > last )); then
+  last="$log_mtime"
+fi
+
+socks_port="$(read_env_value "$SOCKS_ENV" PROXY_PORT || true)"
+http_port="$(read_env_value "$HTTP_ENV" PROXY_PORT || true)"
+
+active_now=0
+if port_has_activity "$socks_port"; then
+  active_now=1
+fi
+if port_has_activity "$http_port"; then
+  active_now=1
+fi
+if (( active_now == 1 )); then
+  last="$now"
+fi
+
+echo "$last" >"$BLINDER_LAST"
+chmod 600 "$BLINDER_LAST" || true
+
+idle=$(( now - last ))
+if (( idle < idle_seconds )); then
+  exit 0
+fi
+if (( active_now == 1 )); then
+  exit 0
+fi
+
+stopped=0
+if service_defined "beammeup-microsocks.service" && service_active "beammeup-microsocks.service"; then
+  systemctl stop "beammeup-microsocks.service" >/dev/null 2>&1 || true
+  stopped=1
+fi
+if service_defined "beammeup-http-sidecar.service" && service_active "beammeup-http-sidecar.service"; then
+  systemctl stop "beammeup-http-sidecar.service" >/dev/null 2>&1 || true
+  stopped=1
+fi
+
+if [[ -f "$HTTP_ENV" ]]; then
+  http_mode="$(read_env_value "$HTTP_ENV" HTTP_MODE || true)"
+  if [[ "$http_mode" != "sidecar" ]]; then
+    if service_defined "squid.service" && service_active "squid.service"; then
+      systemctl stop "squid.service" >/dev/null 2>&1 || true
+      stopped=1
+    fi
+  fi
+fi
+
+if (( stopped == 1 )); then
+  echo "BLINDED_AT=$now" >"$BLINDER_STATE"
+  chmod 600 "$BLINDER_STATE" || true
+fi
+EOF_BLINDER
+  chmod 700 "$BLINDER_SCRIPT"
+
+  cat >"$BLINDER_SERVICE_FILE" <<EOF_UNIT
+[Unit]
+Description=Beammeup Smart Blinder
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/env bash $BLINDER_SCRIPT
+EOF_UNIT
+  chmod 644 "$BLINDER_SERVICE_FILE"
+
+  cat >"$BLINDER_TIMER_FILE" <<EOF_UNIT
+[Unit]
+Description=Beammeup Smart Blinder Timer
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=30s
+AccuracySec=10s
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF_UNIT
+  chmod 644 "$BLINDER_TIMER_FILE"
+
+  systemctl daemon-reload
+  systemctl enable --now "$BLINDER_TIMER" >/dev/null 2>&1 || true
+
+  rm -f "$BLINDER_STATE"
+  date +%s >"$BLINDER_LAST"
+  chmod 600 "$BLINDER_LAST" || true
+}
+
+configure_smart_blinder() {
+  if [[ "$SMART_BLINDER" -eq 1 ]]; then
+    enable_smart_blinder "${SMART_BLINDER_IDLE_MINUTES:-10}"
+  else
+    disable_smart_blinder
+  fi
+}
+
 BEAM_DIR="/etc/beammeup"
 SOCKS_ENV="${BEAM_DIR}/microsocks.env"
 SOCKS_SERVICE="beammeup-microsocks.service"
@@ -207,6 +425,15 @@ HTTP_SIDECAR_SERVICE_FILE="/etc/systemd/system/${HTTP_SIDECAR_SERVICE}"
 SQUID_CONF="/etc/squid/squid.conf"
 SQUID_BACKUP="/etc/squid/squid.conf.beammeup.bak"
 HANGAR_META="${BEAM_DIR}/hangar.json"
+
+BLINDER_ENV="${BEAM_DIR}/smart-blinder.env"
+BLINDER_LAST="${BEAM_DIR}/smart-blinder.last"
+BLINDER_STATE="${BEAM_DIR}/smart-blinder.state"
+BLINDER_SCRIPT="${BEAM_DIR}/smart-blinder.sh"
+BLINDER_SERVICE="beammeup-smart-blinder.service"
+BLINDER_TIMER="beammeup-smart-blinder.timer"
+BLINDER_SERVICE_FILE="/etc/systemd/system/${BLINDER_SERVICE}"
+BLINDER_TIMER_FILE="/etc/systemd/system/${BLINDER_TIMER}"
 
 SOCKS_EXISTS=0
 SOCKS_ACTIVE=0
@@ -275,7 +502,9 @@ load_http_state() {
     HTTP_MODE="sidecar"
 
     if [[ -z "$HTTP_PORT" && -f "$HTTP_SIDECAR_CONF" ]]; then
-      HTTP_PORT="$(awk '/^http_port[[:space:]]+/ {print $2; exit}' "$HTTP_SIDECAR_CONF" 2>/dev/null || true)"
+      local http_port_raw
+      http_port_raw="$(awk '/^http_port[[:space:]]+/ {print $2; exit}' "$HTTP_SIDECAR_CONF" 2>/dev/null || true)"
+      HTTP_PORT="$(extract_port "$http_port_raw")"
     fi
     if [[ -z "$HTTP_USER" && -f "$HTTP_SIDECAR_HTPASSWD" ]]; then
       HTTP_USER="$(awk -F: 'NR==1 {print $1}' "$HTTP_SIDECAR_HTPASSWD" 2>/dev/null || true)"
@@ -298,7 +527,9 @@ load_http_state() {
     fi
 
     if [[ -z "$HTTP_PORT" ]]; then
-      HTTP_PORT="$(awk '/^http_port[[:space:]]+/ {print $2; exit}' "$SQUID_CONF" 2>/dev/null || true)"
+      local http_port_raw
+      http_port_raw="$(awk '/^http_port[[:space:]]+/ {print $2; exit}' "$SQUID_CONF" 2>/dev/null || true)"
+      HTTP_PORT="$(extract_port "$http_port_raw")"
     fi
   fi
 
@@ -360,12 +591,20 @@ reconcile_hangar_status() {
     return
   fi
 
-  if [[ "$SOCKS_EXISTS" == "1" && "$SOCKS_ACTIVE" != "1" ]]; then
-    HANGAR_STATUS="drift"
-  elif [[ "$HTTP_EXISTS" == "1" && "$HTTP_ACTIVE" != "1" ]]; then
-    HANGAR_STATUS="drift"
-  else
+  local any_active=0
+  if [[ "$SOCKS_EXISTS" == "1" && "$SOCKS_ACTIVE" == "1" ]]; then
+    any_active=1
+  fi
+  if [[ "$HTTP_EXISTS" == "1" && "$HTTP_ACTIVE" == "1" ]]; then
+    any_active=1
+  fi
+
+  if [[ "$any_active" == "1" ]]; then
     HANGAR_STATUS="online"
+  elif [[ -f "$BLINDER_ENV" && -f "$BLINDER_STATE" ]]; then
+    HANGAR_STATUS="blinded"
+  else
+    HANGAR_STATUS="drift"
   fi
 
   if [[ "$METADATA_EXISTS" == "0" ]]; then
@@ -466,7 +705,7 @@ run_preflight() {
 
 apply_socks() {
   ensure_requirements
-  ensure_packages microsocks curl
+  ensure_packages microsocks curl iproute2
 
   mkdir -p "$BEAM_DIR"
 
@@ -482,6 +721,11 @@ apply_socks() {
   local final_user="$SOCKS_USER"
   local final_pass="$SOCKS_PASS"
   local note=""
+  local bind_ip="0.0.0.0"
+
+  if [[ "${LISTEN_LOCAL:-0}" -eq 1 ]]; then
+    bind_ip="127.0.0.1"
+  fi
 
   is_valid_port "$desired_port" || die "Invalid proxy port: $desired_port"
   ensure_port_available "$desired_port" "$SOCKS_PORT"
@@ -515,7 +759,7 @@ Type=simple
 User=beammeup
 Group=beammeup
 EnvironmentFile=$SOCKS_ENV
-ExecStart=$microsocks_bin -i 0.0.0.0 -p \${PROXY_PORT} -u \${PROXY_USER} -P \${PROXY_PASS}
+ExecStart=$microsocks_bin -i $bind_ip -p \${PROXY_PORT} -u \${PROXY_USER} -P \${PROXY_PASS}
 Restart=always
 RestartSec=2
 NoNewPrivileges=true
@@ -536,7 +780,13 @@ EOF_UNIT
     die "SOCKS5 service failed to start."
   fi
 
-  apply_firewall_rule "$desired_port"
+  if [[ "${LISTEN_LOCAL:-0}" -eq 1 ]]; then
+    FIREWALL_NOTE="Proxy bound to localhost (requires SSH tunnel)."
+  else
+    apply_firewall_rule "$desired_port"
+  fi
+
+  configure_smart_blinder
 
   if [[ "$ROTATE_CREDENTIALS" -eq 1 ]]; then
     note="Credentials rotated."
@@ -572,6 +822,11 @@ apply_http_managed() {
   local existed="$4"
   local note="$5"
   local auth_helper="$6"
+  local bind_line="http_port $desired_port"
+
+  if [[ "${LISTEN_LOCAL:-0}" -eq 1 ]]; then
+    bind_line="http_port 127.0.0.1:$desired_port"
+  fi
 
   write_http_env "managed" "$desired_port" "$final_user" "$final_pass"
   htpasswd -bc "$HTTP_HTPASSWD" "$final_user" "$final_pass" >/dev/null
@@ -584,7 +839,7 @@ apply_http_managed() {
 
   cat >"$SQUID_CONF" <<EOF_SQUID
 # managed by beammeup
-http_port $desired_port
+$bind_line
 
 acl SSL_ports port 443
 acl Safe_ports port 80
@@ -624,7 +879,13 @@ EOF_SQUID
     die "HTTP proxy (Squid) failed to start."
   fi
 
-  apply_firewall_rule "$desired_port"
+  if [[ "${LISTEN_LOCAL:-0}" -eq 1 ]]; then
+    FIREWALL_NOTE="Proxy bound to localhost (requires SSH tunnel)."
+  else
+    apply_firewall_rule "$desired_port"
+  fi
+
+  configure_smart_blinder
   load_http_state
   load_socks_state
   reconcile_hangar_status
@@ -640,6 +901,11 @@ apply_http_sidecar() {
   local existed="$4"
   local note="$5"
   local auth_helper="$6"
+  local bind_line="http_port $desired_port"
+
+  if [[ "${LISTEN_LOCAL:-0}" -eq 1 ]]; then
+    bind_line="http_port 127.0.0.1:$desired_port"
+  fi
 
   mkdir -p "$HTTP_SIDECAR_DIR" "$HTTP_SIDECAR_LOG_DIR"
 
@@ -652,7 +918,7 @@ apply_http_sidecar() {
 
   cat >"$HTTP_SIDECAR_CONF" <<EOF_SQUID
 # managed by beammeup (http sidecar)
-http_port $desired_port
+$bind_line
 
 acl SSL_ports port 443
 acl Safe_ports port 80
@@ -718,7 +984,13 @@ EOF_UNIT
     die "HTTP sidecar service failed to start."
   fi
 
-  apply_firewall_rule "$desired_port"
+  if [[ "${LISTEN_LOCAL:-0}" -eq 1 ]]; then
+    FIREWALL_NOTE="Proxy bound to localhost (requires SSH tunnel)."
+  else
+    apply_firewall_rule "$desired_port"
+  fi
+
+  configure_smart_blinder
   load_http_state
   load_socks_state
   reconcile_hangar_status
@@ -729,7 +1001,7 @@ EOF_UNIT
 
 apply_http() {
   ensure_requirements
-  ensure_packages squid apache2-utils curl
+  ensure_packages squid apache2-utils curl iproute2
 
   mkdir -p "$BEAM_DIR"
   load_http_state
@@ -878,6 +1150,8 @@ destroy_hangar() {
     note_parts+=("HTTP removed")
   fi
 
+  disable_smart_blinder
+
   rm -f "$HANGAR_META"
   systemctl daemon-reload
 
@@ -894,6 +1168,9 @@ HTTP_MODE_REQUEST=""
 PROXY_PORT=""
 NO_FIREWALL_CHANGE=0
 ROTATE_CREDENTIALS=0
+LISTEN_LOCAL=0
+SMART_BLINDER=1
+SMART_BLINDER_IDLE_MINUTES=10
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -917,15 +1194,35 @@ while [[ $# -gt 0 ]]; do
       NO_FIREWALL_CHANGE=1
       shift
       ;;
+    --listen-local)
+      LISTEN_LOCAL=1
+      shift
+      ;;
     --rotate-credentials)
       ROTATE_CREDENTIALS=1
       shift
+      ;;
+    --smart-blinder)
+      SMART_BLINDER=1
+      shift
+      ;;
+    --no-smart-blinder)
+      SMART_BLINDER=0
+      shift
+      ;;
+    --smart-blinder-idle-minutes)
+      SMART_BLINDER_IDLE_MINUTES="$2"
+      shift 2
       ;;
     *)
       die "Unknown argument: $1"
       ;;
   esac
 done
+
+if ! is_valid_positive_int "${SMART_BLINDER_IDLE_MINUTES:-10}"; then
+  SMART_BLINDER_IDLE_MINUTES=10
+fi
 
 case "$MODE" in
   inventory)

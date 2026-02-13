@@ -7,38 +7,48 @@ import (
 )
 
 type Options struct {
-	Host             string
-	ShipName         string
-	ListShips        bool
-	SSHPort          int
-	SSHUser          string
-	SSHPassword      string
-	SSHKnownHosts    string
-	StrictHostKey    bool
-	InsecureHostKey  bool
-	Protocol         string
-	HTTPMode         string
-	ProxyPort        int
-	Action           string
-	ShowInventory    bool
-	PreflightOnly    bool
-	NoFirewallChange bool
-	SelfUpdate       bool
-	AutoUpdate       bool
-	BaseURL          string
-	VersionOnly      bool
-	Yes              bool
-	Help             bool
-	RawArgs          []string
+	Host                    string
+	ShipName                string
+	ListShips               bool
+	SSHPort                 int
+	SSHUser                 string
+	SSHPassword             string
+	SSHKnownHosts           string
+	StrictHostKey           bool
+	InsecureHostKey         bool
+	Protocol                string
+	HTTPMode                string
+	ProxyPort               int
+	Action                  string
+	ShowInventory           bool
+	PreflightOnly           bool
+	NoFirewallChange        bool
+	ListenLocal             bool
+	SmartBlinder            bool
+	SmartBlinderIdleMinutes int
+	SelfUpdate              bool
+	AutoUpdate              bool
+	BaseURL                 string
+	VersionOnly             bool
+	Yes                     bool
+	Help                    bool
+	RawArgs                 []string
+
+	// Tracks whether flags were explicitly provided so we don't override ship defaults.
+	ListenLocalSet         bool
+	SmartBlinderSet        bool
+	SmartBlinderIdleMinSet bool
 }
 
 func DefaultOptions() Options {
 	return Options{
-		SSHPort:  22,
-		SSHUser:  "root",
-		BaseURL:  "https://beammeup.pw",
-		Protocol: "",
-		Action:   "",
+		SSHPort:                 22,
+		SSHUser:                 "root",
+		BaseURL:                 "https://beammeup.pw",
+		Protocol:                "",
+		Action:                  "",
+		SmartBlinder:            true,
+		SmartBlinderIdleMinutes: 10,
 	}
 }
 
@@ -63,6 +73,9 @@ func Parse(args []string) (Options, error) {
 	fs.BoolVar(&opts.ShowInventory, "show-inventory", false, "Show inventory")
 	fs.BoolVar(&opts.PreflightOnly, "preflight-only", false, "Preflight only")
 	fs.BoolVar(&opts.NoFirewallChange, "no-firewall-change", false, "Skip firewall changes")
+	fs.BoolVar(&opts.ListenLocal, "listen-local", opts.ListenLocal, "Bind proxy to localhost on VPS (requires SSH tunnel)")
+	fs.BoolVar(&opts.SmartBlinder, "smart-blinder", opts.SmartBlinder, "Smart blinder: stop proxy after idle (recommended)")
+	fs.IntVar(&opts.SmartBlinderIdleMinutes, "smart-blinder-idle-minutes", opts.SmartBlinderIdleMinutes, "Smart blinder idle minutes (default: 10)")
 	fs.BoolVar(&opts.SelfUpdate, "self-update", false, "Self update")
 	fs.BoolVar(&opts.AutoUpdate, "auto-update", false, "Auto update")
 	fs.StringVar(&opts.BaseURL, "base-url", opts.BaseURL, "Release base URL")
@@ -75,6 +88,12 @@ func Parse(args []string) (Options, error) {
 	}
 	if opts.StrictHostKey && opts.InsecureHostKey {
 		return opts, fmt.Errorf("use either --strict-host-key or --insecure-ignore-host-key, not both")
+	}
+	opts.ListenLocalSet = fs.Changed("listen-local")
+	opts.SmartBlinderSet = fs.Changed("smart-blinder")
+	opts.SmartBlinderIdleMinSet = fs.Changed("smart-blinder-idle-minutes")
+	if opts.SmartBlinder && opts.SmartBlinderIdleMinutes <= 0 {
+		return opts, fmt.Errorf("--smart-blinder-idle-minutes must be > 0")
 	}
 	opts.RawArgs = fs.Args()
 	if len(opts.RawArgs) > 0 {

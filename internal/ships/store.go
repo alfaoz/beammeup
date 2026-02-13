@@ -14,14 +14,17 @@ import (
 const DefaultDirSuffix = ".beammeup/ships"
 
 type Ship struct {
-	Name             string
-	Host             string
-	SSHPort          int
-	SSHUser          string
-	Protocol         string
-	HTTPMode         string
-	ProxyPort        int
-	NoFirewallChange bool
+	Name                    string
+	Host                    string
+	SSHPort                 int
+	SSHUser                 string
+	Protocol                string
+	HTTPMode                string
+	ProxyPort               int
+	NoFirewallChange        bool
+	ListenLocal             bool
+	SmartBlinder            bool
+	SmartBlinderIdleMinutes int
 }
 
 type Store struct {
@@ -128,16 +131,26 @@ func (s *Store) Load(name string) (Ship, error) {
 		protocol = "http"
 	}
 	noFW := vals["NO_FIREWALL_CHANGE"] == "1" || strings.EqualFold(vals["NO_FIREWALL_CHANGE"], "true")
+	listenLocal := vals["LISTEN_LOCAL"] == "1" || strings.EqualFold(vals["LISTEN_LOCAL"], "true")
+
+	smartBlinder := true
+	if v, ok := vals["SMART_BLINDER"]; ok && strings.TrimSpace(v) != "" {
+		smartBlinder = v == "1" || strings.EqualFold(v, "true") || strings.EqualFold(v, "yes")
+	}
+	blinderIdleMin := parseIntDefault(vals["SMART_BLINDER_IDLE_MINUTES"], 10)
 
 	ship := Ship{
-		Name:             name,
-		Host:             vals["HOST"],
-		SSHPort:          sshPort,
-		SSHUser:          defaultIfEmpty(vals["SSH_USER"], "root"),
-		Protocol:         protocol,
-		HTTPMode:         normalizeHTTPMode(vals["HTTP_MODE"]),
-		ProxyPort:        proxyPort,
-		NoFirewallChange: noFW,
+		Name:                    name,
+		Host:                    vals["HOST"],
+		SSHPort:                 sshPort,
+		SSHUser:                 defaultIfEmpty(vals["SSH_USER"], "root"),
+		Protocol:                protocol,
+		HTTPMode:                normalizeHTTPMode(vals["HTTP_MODE"]),
+		ProxyPort:               proxyPort,
+		NoFirewallChange:        noFW,
+		ListenLocal:             listenLocal,
+		SmartBlinder:            smartBlinder,
+		SmartBlinderIdleMinutes: blinderIdleMin,
 	}
 	if strings.TrimSpace(ship.Host) == "" {
 		return Ship{}, fmt.Errorf("ship %q missing HOST", name)
@@ -170,12 +183,28 @@ func (s *Store) Save(ship Ship) (Ship, error) {
 			ship.ProxyPort = 18181
 		}
 	}
+	if ship.SmartBlinderIdleMinutes <= 0 {
+		ship.SmartBlinderIdleMinutes = 10
+	}
 
 	var noFW string
 	if ship.NoFirewallChange {
 		noFW = "1"
 	} else {
 		noFW = "0"
+	}
+
+	var listenLocal string
+	if ship.ListenLocal {
+		listenLocal = "1"
+	} else {
+		listenLocal = "0"
+	}
+	var smartBlinder string
+	if ship.SmartBlinder {
+		smartBlinder = "1"
+	} else {
+		smartBlinder = "0"
 	}
 
 	content := strings.Join([]string{
@@ -186,6 +215,9 @@ func (s *Store) Save(ship Ship) (Ship, error) {
 		"HTTP_MODE=" + ship.HTTPMode,
 		"PROXY_PORT=" + strconv.Itoa(ship.ProxyPort),
 		"NO_FIREWALL_CHANGE=" + noFW,
+		"LISTEN_LOCAL=" + listenLocal,
+		"SMART_BLINDER=" + smartBlinder,
+		"SMART_BLINDER_IDLE_MINUTES=" + strconv.Itoa(ship.SmartBlinderIdleMinutes),
 		"",
 	}, "\n")
 

@@ -15,14 +15,17 @@ func TestStoreSaveLoadLegacyCompatibility(t *testing.T) {
 	}
 
 	saved, err := store.Save(Ship{
-		Name:             "RPS VPS",
-		Host:             "REDACTED_IP",
-		SSHPort:          22,
-		SSHUser:          "root",
-		Protocol:         "http",
-		HTTPMode:         "sidecar",
-		ProxyPort:        18181,
-		NoFirewallChange: true,
+		Name:                    "RPS VPS",
+		Host:                    "REDACTED_IP",
+		SSHPort:                 22,
+		SSHUser:                 "root",
+		Protocol:                "http",
+		HTTPMode:                "sidecar",
+		ProxyPort:               18181,
+		NoFirewallChange:        true,
+		ListenLocal:             true,
+		SmartBlinder:            true,
+		SmartBlinderIdleMinutes: 15,
 	})
 	if err != nil {
 		t.Fatalf("Save: %v", err)
@@ -36,7 +39,18 @@ func TestStoreSaveLoadLegacyCompatibility(t *testing.T) {
 		t.Fatalf("ReadFile: %v", err)
 	}
 	got := string(content)
-	for _, key := range []string{"HOST=REDACTED_IP", "SSH_PORT=22", "SSH_USER=root", "PROTOCOL=http", "HTTP_MODE=sidecar", "PROXY_PORT=18181", "NO_FIREWALL_CHANGE=1"} {
+	for _, key := range []string{
+		"HOST=REDACTED_IP",
+		"SSH_PORT=22",
+		"SSH_USER=root",
+		"PROTOCOL=http",
+		"HTTP_MODE=sidecar",
+		"PROXY_PORT=18181",
+		"NO_FIREWALL_CHANGE=1",
+		"LISTEN_LOCAL=1",
+		"SMART_BLINDER=1",
+		"SMART_BLINDER_IDLE_MINUTES=15",
+	} {
 		if !strings.Contains(got, key) {
 			t.Fatalf("expected %q in file", key)
 		}
@@ -54,6 +68,15 @@ func TestStoreSaveLoadLegacyCompatibility(t *testing.T) {
 	}
 	if !loaded.NoFirewallChange {
 		t.Fatalf("expected NoFirewallChange=true")
+	}
+	if !loaded.ListenLocal {
+		t.Fatalf("expected ListenLocal=true")
+	}
+	if !loaded.SmartBlinder {
+		t.Fatalf("expected SmartBlinder=true")
+	}
+	if loaded.SmartBlinderIdleMinutes != 15 {
+		t.Fatalf("expected SmartBlinderIdleMinutes=15, got %d", loaded.SmartBlinderIdleMinutes)
 	}
 }
 
@@ -82,6 +105,15 @@ func TestStoreLoadLegacyDefaults(t *testing.T) {
 	}
 	if loaded.ProxyPort != 18181 {
 		t.Fatalf("expected default proxy port 18181, got %d", loaded.ProxyPort)
+	}
+	if loaded.ListenLocal {
+		t.Fatalf("expected default ListenLocal=false")
+	}
+	if !loaded.SmartBlinder {
+		t.Fatalf("expected default SmartBlinder=true")
+	}
+	if loaded.SmartBlinderIdleMinutes != 10 {
+		t.Fatalf("expected default SmartBlinderIdleMinutes=10, got %d", loaded.SmartBlinderIdleMinutes)
 	}
 }
 

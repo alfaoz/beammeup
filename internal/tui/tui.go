@@ -272,27 +272,31 @@ func (a *App) hangarMenu(ship ships.Ship) error {
 			a.status[ship.Name] = inv.HangarStatus
 			a.showInventoryCard(ship, inv)
 		case "configure", "rotate":
-			protocol, httpMode, port, noFW, err := a.configurePrompt(ship)
+			updated, err := a.configurePrompt(ship)
 			if err != nil {
 				if errors.Is(err, errUserCancelled) {
 					continue
 				}
 				return err
 			}
+			ship = updated
 			in := hangar.ActionInput{
-				Mode:              "apply",
-				Protocol:          protocol,
-				HTTPMode:          httpMode,
-				ProxyPort:         port,
-				NoFirewallChange:  noFW,
-				RotateCredentials: choice == "rotate",
+				Mode:                    "apply",
+				Protocol:                ship.Protocol,
+				HTTPMode:                ship.HTTPMode,
+				ProxyPort:               ship.ProxyPort,
+				NoFirewallChange:        ship.NoFirewallChange,
+				ListenLocal:             ship.ListenLocal,
+				SmartBlinder:            ship.SmartBlinder,
+				SmartBlinderIdleMinutes: ship.SmartBlinderIdleMinutes,
+				RotateCredentials:       choice == "rotate",
 			}
 			res, err := a.execWithPassword(ship, in)
 			if err != nil {
 				if errors.Is(err, errUserCancelled) {
 					continue
 				}
-				handled, updated, fallbackErr := a.handleHTTPConflictWizard(ship, protocol, port, err)
+				handled, updated, fallbackErr := a.handleHTTPConflictWizard(ship, ship.Protocol, ship.ProxyPort, err)
 				if handled {
 					if fallbackErr != nil {
 						return fallbackErr
@@ -305,7 +309,7 @@ func (a *App) hangarMenu(ship ships.Ship) error {
 				}
 				return err
 			}
-			a.showResultCard(res)
+			a.showResultCard(ship, res)
 			if inv, err := a.inventoryWithPassword(ship); err == nil {
 				a.status[ship.Name] = inv.HangarStatus
 			}
@@ -408,11 +412,14 @@ func (a *App) ensureHangarCreated(ship ships.Ship, forcePrompt bool) error {
 			}
 		}
 		res, err := a.execWithPassword(ship, hangar.ActionInput{
-			Mode:             "apply",
-			Protocol:         protocol,
-			HTTPMode:         ship.HTTPMode,
-			ProxyPort:        port,
-			NoFirewallChange: ship.NoFirewallChange,
+			Mode:                    "apply",
+			Protocol:                protocol,
+			HTTPMode:                ship.HTTPMode,
+			ProxyPort:               port,
+			NoFirewallChange:        ship.NoFirewallChange,
+			ListenLocal:             ship.ListenLocal,
+			SmartBlinder:            ship.SmartBlinder,
+			SmartBlinderIdleMinutes: ship.SmartBlinderIdleMinutes,
 		})
 		if err != nil {
 			handled, _, fallbackErr := a.handleHTTPConflictWizard(ship, protocol, port, err)
@@ -422,14 +429,14 @@ func (a *App) ensureHangarCreated(ship ships.Ship, forcePrompt bool) error {
 			return err
 		}
 		a.status[ship.Name] = hangar.StatusOnline
-		a.showResultCard(res)
+		a.showResultCard(ship, res)
 	}
 	return nil
 }
 
-func (a *App) configurePrompt(ship ships.Ship) (protocol string, httpMode string, port int, noFW bool, err error) {
-	protocol = fallback(ship.Protocol, "http")
-	httpMode = normalizeHTTPMode(ship.HTTPMode)
+func (a *App) configurePrompt(ship ships.Ship) (ships.Ship, error) {
+	protocol := fallback(ship.Protocol, "http")
+	httpMode := normalizeHTTPMode(ship.HTTPMode)
 	portStr := strconv.Itoa(ship.ProxyPort)
 	if ship.ProxyPort == 0 {
 		if protocol == "socks5" {
@@ -438,7 +445,11 @@ func (a *App) configurePrompt(ship ships.Ship) (protocol string, httpMode string
 			portStr = "18181"
 		}
 	}
-	noFW = ship.NoFirewallChange
+
+	listenLocal := ship.ListenLocal
+	smartBlinder := ship.SmartBlinder
+	idleMinStr := strconv.Itoa(nonZero(ship.SmartBlinderIdleMinutes, 10))
+	noFW := ship.NoFirewallChange
 
 	group := huh.NewGroup(
 		huh.NewSelect[string]().
@@ -446,13 +457,31 @@ func (a *App) configurePrompt(ship ships.Ship) (protocol string, httpMode string
 			Options(huh.NewOption("HTTP", "http"), huh.NewOption("SOCKS5", "socks5")).
 			Value(&protocol),
 		huh.NewInput().Title("Proxy port").Value(&portStr),
-		huh.NewConfirm().Title("Skip firewall changes?").Value(&noFW),
+		huh.NewConfirm().
+			Title("Bind proxy to localhost only (requires SSH tunnel)?").
+			Description("More private: nothing is reachable publicly on the proxy port.").
+			Value(&listenLocal),
+		huh.NewConfirm().
+			Title("Enable smart blinder (idle shutdown)?").
+			Description("Stops the proxy after a period of no-use (recommended).").
+			Value(&smartBlinder),
 	)
 	if err := huh.NewForm(group).Run(); err != nil {
 		if isUserCancelled(err) {
-			return "", "", 0, false, errUserCancelled
+			return ships.Ship{}, errUserCancelled
 		}
-		return "", "", 0, false, err
+		return ships.Ship{}, err
+	}
+
+	if listenLocal {
+		noFW = true
+	} else {
+		if err := huh.NewConfirm().Title("Skip firewall changes?").Value(&noFW).Run(); err != nil {
+			if isUserCancelled(err) {
+				return ships.Ship{}, errUserCancelled
+			}
+			return ships.Ship{}, err
+		}
 	}
 
 	if protocol == "http" {
@@ -467,27 +496,44 @@ func (a *App) configurePrompt(ship ships.Ship) (protocol string, httpMode string
 			Value(&modeChoice).
 			Run(); err != nil {
 			if isUserCancelled(err) {
-				return "", "", 0, false, errUserCancelled
+				return ships.Ship{}, errUserCancelled
 			}
-			return "", "", 0, false, err
+			return ships.Ship{}, err
 		}
 		httpMode = modeChoice
 	} else {
 		httpMode = ""
 	}
 
-	port, err = strconv.Atoi(strings.TrimSpace(portStr))
+	port, err := strconv.Atoi(strings.TrimSpace(portStr))
 	if err != nil || port <= 0 {
-		return "", "", 0, false, fmt.Errorf("invalid proxy port: %s", portStr)
+		return ships.Ship{}, fmt.Errorf("invalid proxy port: %s", portStr)
 	}
+
+	idleMin := nonZero(ship.SmartBlinderIdleMinutes, 10)
+	if smartBlinder {
+		if err := huh.NewInput().Title("Smart blinder idle minutes").Value(&idleMinStr).Run(); err != nil {
+			if isUserCancelled(err) {
+				return ships.Ship{}, errUserCancelled
+			}
+			return ships.Ship{}, err
+		}
+		v, err := strconv.Atoi(strings.TrimSpace(idleMinStr))
+		if err != nil || v <= 0 {
+			return ships.Ship{}, fmt.Errorf("invalid smart blinder idle minutes: %s", idleMinStr)
+		}
+		idleMin = v
+	}
+
 	ship.Protocol = protocol
 	ship.HTTPMode = httpMode
 	ship.ProxyPort = port
 	ship.NoFirewallChange = noFW
-	if _, saveErr := a.Store.Save(ship); saveErr != nil {
-		return "", "", 0, false, saveErr
-	}
-	return protocol, httpMode, port, noFW, nil
+	ship.ListenLocal = listenLocal
+	ship.SmartBlinder = smartBlinder
+	ship.SmartBlinderIdleMinutes = idleMin
+
+	return a.Store.Save(ship)
 }
 
 func (a *App) createShipForm(existing ships.Ship) (ships.Ship, error) {
@@ -500,6 +546,12 @@ func (a *App) createShipForm(existing ships.Ship) (ships.Ship, error) {
 	httpMode := normalizeHTTPMode(ship.HTTPMode)
 	proxyPort := strconv.Itoa(nonZero(ship.ProxyPort, defaultProxy(protocol)))
 	noFW := ship.NoFirewallChange
+	listenLocal := ship.ListenLocal
+	smartBlinder := ship.SmartBlinder
+	if ship.Name == "" && !ship.SmartBlinder {
+		smartBlinder = true
+	}
+	idleMinStr := strconv.Itoa(nonZero(ship.SmartBlinderIdleMinutes, 10))
 
 	group := huh.NewGroup(
 		huh.NewInput().Title("Ship name").Value(&name),
@@ -511,7 +563,14 @@ func (a *App) createShipForm(existing ships.Ship) (ships.Ship, error) {
 			Options(huh.NewOption("HTTP", "http"), huh.NewOption("SOCKS5", "socks5")).
 			Value(&protocol),
 		huh.NewInput().Title("Default proxy port").Value(&proxyPort),
-		huh.NewConfirm().Title("Skip firewall changes by default?").Value(&noFW),
+		huh.NewConfirm().
+			Title("Bind proxy to localhost only (requires SSH tunnel)?").
+			Description("More private: nothing is reachable publicly on the proxy port.").
+			Value(&listenLocal),
+		huh.NewConfirm().
+			Title("Enable smart blinder (idle shutdown)?").
+			Description("Stops the proxy after a period of no-use (recommended).").
+			Value(&smartBlinder),
 	)
 
 	if err := huh.NewForm(group).Run(); err != nil {
@@ -542,6 +601,32 @@ func (a *App) createShipForm(existing ships.Ship) (ships.Ship, error) {
 		httpMode = ""
 	}
 
+	if listenLocal {
+		noFW = true
+	} else {
+		if err := huh.NewConfirm().Title("Skip firewall changes by default?").Value(&noFW).Run(); err != nil {
+			if isUserCancelled(err) {
+				return ships.Ship{}, errUserCancelled
+			}
+			return ships.Ship{}, err
+		}
+	}
+
+	idleMin := nonZero(ship.SmartBlinderIdleMinutes, 10)
+	if smartBlinder {
+		if err := huh.NewInput().Title("Smart blinder idle minutes").Value(&idleMinStr).Run(); err != nil {
+			if isUserCancelled(err) {
+				return ships.Ship{}, errUserCancelled
+			}
+			return ships.Ship{}, err
+		}
+		v, err := strconv.Atoi(strings.TrimSpace(idleMinStr))
+		if err != nil || v <= 0 {
+			return ships.Ship{}, fmt.Errorf("invalid smart blinder idle minutes: %s", idleMinStr)
+		}
+		idleMin = v
+	}
+
 	name = ships.SanitizeName(name)
 	if name == "" {
 		return ships.Ship{}, fmt.Errorf("ship name is required")
@@ -556,14 +641,17 @@ func (a *App) createShipForm(existing ships.Ship) (ships.Ship, error) {
 	}
 
 	ship = ships.Ship{
-		Name:             name,
-		Host:             strings.TrimSpace(host),
-		SSHPort:          port,
-		SSHUser:          strings.TrimSpace(sshUser),
-		Protocol:         protocol,
-		HTTPMode:         httpMode,
-		ProxyPort:        proxy,
-		NoFirewallChange: noFW,
+		Name:                    name,
+		Host:                    strings.TrimSpace(host),
+		SSHPort:                 port,
+		SSHUser:                 strings.TrimSpace(sshUser),
+		Protocol:                protocol,
+		HTTPMode:                httpMode,
+		ProxyPort:               proxy,
+		NoFirewallChange:        noFW,
+		ListenLocal:             listenLocal,
+		SmartBlinder:            smartBlinder,
+		SmartBlinderIdleMinutes: idleMin,
 	}
 	return a.Store.Save(ship)
 }
@@ -656,27 +744,61 @@ func (a *App) showInventoryCard(ship ships.Ship, inv hangar.Inventory) {
 		lines = append(lines, "No hangar services configured.")
 	}
 	if inv.HTTP.Exists && inv.HTTP.Pass != "" {
-		lines = append(lines, "", fmt.Sprintf("HTTP quick test: curl -x 'http://%s:%s@%s:%s' https://api.ipify.org", inv.HTTP.User, inv.HTTP.Pass, ship.Host, inv.HTTP.Port))
+		host := ship.Host
+		port := inv.HTTP.Port
+		if ship.ListenLocal {
+			host = "127.0.0.1"
+			sshCmd := fmt.Sprintf("ssh -N -o ExitOnForwardFailure=yes -L %s:127.0.0.1:%s %s@%s -p %d", port, port, ship.SSHUser, ship.Host, ship.SSHPort)
+			if ship.SSHPort == 22 {
+				sshCmd = fmt.Sprintf("ssh -N -o ExitOnForwardFailure=yes -L %s:127.0.0.1:%s %s@%s", port, port, ship.SSHUser, ship.Host)
+			}
+			lines = append(lines, "", "HTTP tunnel:", sshCmd)
+		}
+		lines = append(lines, "", fmt.Sprintf("HTTP quick test: curl -x 'http://%s:%s@%s:%s' https://api.ipify.org", inv.HTTP.User, inv.HTTP.Pass, host, port))
 	}
 	if inv.Socks5.Exists && inv.Socks5.Pass != "" {
-		lines = append(lines, "", fmt.Sprintf("SOCKS5 quick test: curl -x 'socks5h://%s:%s@%s:%s' https://api.ipify.org", inv.Socks5.User, inv.Socks5.Pass, ship.Host, inv.Socks5.Port))
+		host := ship.Host
+		port := inv.Socks5.Port
+		if ship.ListenLocal {
+			host = "127.0.0.1"
+			sshCmd := fmt.Sprintf("ssh -N -o ExitOnForwardFailure=yes -L %s:127.0.0.1:%s %s@%s -p %d", port, port, ship.SSHUser, ship.Host, ship.SSHPort)
+			if ship.SSHPort == 22 {
+				sshCmd = fmt.Sprintf("ssh -N -o ExitOnForwardFailure=yes -L %s:127.0.0.1:%s %s@%s", port, port, ship.SSHUser, ship.Host)
+			}
+			lines = append(lines, "", "SOCKS5 tunnel:", sshCmd)
+		}
+		lines = append(lines, "", fmt.Sprintf("SOCKS5 quick test: curl -x 'socks5h://%s:%s@%s:%s' https://api.ipify.org", inv.Socks5.User, inv.Socks5.Pass, host, port))
 	}
 	a.note("hangar configuration", strings.Join(lines, "\n"))
 }
 
-func (a *App) showResultCard(res hangar.ActionResult) {
+func (a *App) showResultCard(ship ships.Ship, res hangar.ActionResult) {
 	if strings.EqualFold(res.Protocol, "DESTROY") {
 		a.note("destroy complete", fallback(res.Note, "hangar removed"))
 		return
 	}
+
+	host := res.Host
+	port := res.Port
+	if ship.ListenLocal {
+		host = "127.0.0.1"
+	}
+
 	msg := []string{
 		fmt.Sprintf("Action: %s", res.Action),
 		fmt.Sprintf("Protocol: %s", res.Protocol),
 		fmt.Sprintf("HTTP mode: %s", fallback(res.HTTPMode, "-")),
-		fmt.Sprintf("Host: %s", res.Host),
-		fmt.Sprintf("Port: %s", res.Port),
+		fmt.Sprintf("Host: %s", host),
+		fmt.Sprintf("Port: %s", port),
 		fmt.Sprintf("Username: %s", fallback(res.User, "-")),
 		fmt.Sprintf("Password: %s", fallback(res.Pass, "<not retrievable>")),
+	}
+	if ship.ListenLocal && strings.TrimSpace(port) != "" {
+		sshCmd := fmt.Sprintf("ssh -N -o ExitOnForwardFailure=yes -L %s:127.0.0.1:%s %s@%s -p %d", port, port, ship.SSHUser, ship.Host, ship.SSHPort)
+		if ship.SSHPort == 22 {
+			sshCmd = fmt.Sprintf("ssh -N -o ExitOnForwardFailure=yes -L %s:127.0.0.1:%s %s@%s", port, port, ship.SSHUser, ship.Host)
+		}
+		msg = append(msg, "", "SSH tunnel required (keep it running):", sshCmd)
 	}
 	if res.FirewallNote != "" {
 		msg = append(msg, "", "Firewall: "+res.FirewallNote)
@@ -733,11 +855,14 @@ func (a *App) handleHTTPConflictWizard(ship ships.Ship, requestedProtocol string
 		var lastErr error
 		for _, p := range ports {
 			res, err := a.execWithPassword(ship, hangar.ActionInput{
-				Mode:             "apply",
-				Protocol:         "http",
-				HTTPMode:         "sidecar",
-				ProxyPort:        p,
-				NoFirewallChange: ship.NoFirewallChange,
+				Mode:                    "apply",
+				Protocol:                "http",
+				HTTPMode:                "sidecar",
+				ProxyPort:               p,
+				NoFirewallChange:        ship.NoFirewallChange,
+				ListenLocal:             ship.ListenLocal,
+				SmartBlinder:            ship.SmartBlinder,
+				SmartBlinderIdleMinutes: ship.SmartBlinderIdleMinutes,
 			})
 			if err != nil {
 				lastErr = err
@@ -758,7 +883,7 @@ func (a *App) handleHTTPConflictWizard(ship ships.Ship, requestedProtocol string
 
 			a.status[saved.Name] = hangar.StatusOnline
 			a.note("HTTP sidecar ready", "existing Squid config was preserved. beammeup created an isolated sidecar HTTP proxy.")
-			a.showResultCard(res)
+			a.showResultCard(saved, res)
 			return true, saved, nil
 		}
 		if lastErr != nil {
@@ -772,10 +897,13 @@ func (a *App) handleHTTPConflictWizard(ship ships.Ship, requestedProtocol string
 	var lastErr error
 	for _, p := range ports {
 		res, err := a.execWithPassword(ship, hangar.ActionInput{
-			Mode:             "apply",
-			Protocol:         "socks5",
-			ProxyPort:        p,
-			NoFirewallChange: ship.NoFirewallChange,
+			Mode:                    "apply",
+			Protocol:                "socks5",
+			ProxyPort:               p,
+			NoFirewallChange:        ship.NoFirewallChange,
+			ListenLocal:             ship.ListenLocal,
+			SmartBlinder:            ship.SmartBlinder,
+			SmartBlinderIdleMinutes: ship.SmartBlinderIdleMinutes,
 		})
 		if err != nil {
 			lastErr = err
@@ -796,7 +924,7 @@ func (a *App) handleHTTPConflictWizard(ship ships.Ship, requestedProtocol string
 
 		a.status[saved.Name] = hangar.StatusOnline
 		a.note("HTTP preserved", "existing Squid config was left untouched. beammeup set up SOCKS5 for this ship.")
-		a.showResultCard(res)
+		a.showResultCard(saved, res)
 		return true, saved, nil
 	}
 
