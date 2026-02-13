@@ -1,9 +1,11 @@
 package tui
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
 	"time"
@@ -11,6 +13,8 @@ import (
 	"github.com/alfaoz/beammeup/internal/hangar"
 	"github.com/alfaoz/beammeup/internal/session"
 	"github.com/alfaoz/beammeup/internal/ships"
+	"github.com/alfaoz/beammeup/internal/sshx"
+	"github.com/alfaoz/beammeup/internal/tunnel"
 	"github.com/charmbracelet/huh"
 )
 
@@ -179,6 +183,7 @@ func (a *App) shipCockpit(ship ships.Ship) error {
 			Title(title).
 			Options(
 				huh.NewOption("Launch", "launch"),
+				huh.NewOption("Launch (Stealth)", "stealth"),
 				huh.NewOption("Hangar", "hangar"),
 				huh.NewOption("Edit Ship", "edit"),
 				huh.NewOption("Forget Session Password", "forget"),
@@ -197,6 +202,10 @@ func (a *App) shipCockpit(ship ships.Ship) error {
 		case "launch":
 			if err := a.launchShip(ship); err != nil {
 				a.note("launch failed", err.Error())
+			}
+		case "stealth":
+			if err := a.launchStealth(ship); err != nil {
+				a.note("stealth failed", err.Error())
 			}
 		case "hangar":
 			if err := a.hangarMenu(ship); err != nil {
@@ -395,6 +404,49 @@ func (a *App) launchShip(ship ships.Ship) error {
 		a.showInventoryCard(ship, inv)
 		return nil
 	}
+}
+
+func (a *App) launchStealth(ship ships.Ship) error {
+	password, err := a.passwordForShip(ship)
+	if err != nil {
+		if errors.Is(err, errUserCancelled) {
+			return nil
+		}
+		return err
+	}
+
+	localPort := ship.ProxyPort
+	if localPort <= 0 {
+		localPort = 1080
+	}
+	localAddr := fmt.Sprintf("127.0.0.1:%d", localPort)
+
+	target := sshx.Target{
+		Host:     ship.Host,
+		Port:     ship.SSHPort,
+		User:     ship.SSHUser,
+		Password: password,
+	}
+
+	fmt.Printf("\n[beammeup] stealth mode :: %s\n", ship.Name)
+	fmt.Printf("  Local proxy: socks5://%s\n", localAddr)
+	fmt.Printf("  VPS footprint: none (SSH tunnel only)\n\n")
+	fmt.Printf("Quick test:\n")
+	fmt.Printf("  curl -x socks5h://%s https://api.ipify.org\n\n", localAddr)
+	fmt.Printf("Press Ctrl+C to return to cockpit.\n\n")
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+
+	logf := func(format string, args ...any) {
+		fmt.Fprintf(os.Stderr, "[stealth] "+format+"\n", args...)
+	}
+
+	if err := tunnel.Run(ctx, target, a.HangarSvc.SSH, localAddr, logf); err != nil {
+		return err
+	}
+	fmt.Println("\n[beammeup] stealth tunnel closed.")
+	return nil
 }
 
 func (a *App) ensureHangarCreated(ship ships.Ship, forcePrompt bool) error {

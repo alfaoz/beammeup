@@ -26,6 +26,7 @@ type Options struct {
 	ListenLocal             bool
 	SmartBlinder            bool
 	SmartBlinderIdleMinutes int
+	Stealth                 bool
 	SelfUpdate              bool
 	AutoUpdate              bool
 	BaseURL                 string
@@ -73,6 +74,7 @@ func Parse(args []string) (Options, error) {
 	fs.BoolVar(&opts.ShowInventory, "show-inventory", false, "Show inventory")
 	fs.BoolVar(&opts.PreflightOnly, "preflight-only", false, "Preflight only")
 	fs.BoolVar(&opts.NoFirewallChange, "no-firewall-change", false, "Skip firewall changes")
+	fs.BoolVar(&opts.Stealth, "stealth", false, "Stealth mode: local SOCKS5 proxy via SSH tunnel, zero VPS footprint")
 	fs.BoolVar(&opts.ListenLocal, "listen-local", opts.ListenLocal, "Bind proxy to localhost on VPS (requires SSH tunnel)")
 	fs.BoolVar(&opts.SmartBlinder, "smart-blinder", opts.SmartBlinder, "Smart blinder: stop proxy after idle (recommended)")
 	fs.IntVar(&opts.SmartBlinderIdleMinutes, "smart-blinder-idle-minutes", opts.SmartBlinderIdleMinutes, "Smart blinder idle minutes (default: 10)")

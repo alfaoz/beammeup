@@ -204,6 +204,13 @@ func (c *Client) RunCombined(command string) (string, error) {
 	return string(out), err
 }
 
+func (c *Client) Dial(network, addr string) (net.Conn, error) {
+	if c == nil || c.sshClient == nil {
+		return nil, errors.New("ssh client not connected")
+	}
+	return c.sshClient.Dial(network, addr)
+}
+
 func (c *Client) Upload(content []byte, remotePath string, mode os.FileMode) error {
 	sftpClient, err := sftp.NewClient(c.sshClient)
 	if err != nil {

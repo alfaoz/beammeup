@@ -2,14 +2,18 @@ package cli
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
 
 	"github.com/alfaoz/beammeup/internal/hangar"
 	"github.com/alfaoz/beammeup/internal/ships"
+	"github.com/alfaoz/beammeup/internal/sshx"
+	"github.com/alfaoz/beammeup/internal/tunnel"
 	"golang.org/x/term"
 )
 
@@ -46,6 +50,7 @@ Options:
   --action <show|configure|rotate|destroy>
   --show-inventory              List detected beammeup setups and exit
   --preflight-only              Run checks only, make no remote changes
+  --stealth                     Stealth mode: local SOCKS5 via SSH tunnel, zero VPS footprint
   --no-firewall-change          Do not add firewall rules on the VPS
   --listen-local                Bind proxy to localhost on the VPS (requires SSH tunnel)
   --smart-blinder               Smart blinder (default: true). Disable with --smart-blinder=false
@@ -179,6 +184,10 @@ func (r *Runner) Run(opts Options) (int, error) {
 	}
 	if strings.TrimSpace(password) == "" {
 		return ExitUsage, errors.New("ssh password is required")
+	}
+
+	if opts.Stealth {
+		return r.runStealth(ship, password, opts)
 	}
 
 	inv, err := r.Hangar.Inventory(ship, password)
@@ -426,6 +435,42 @@ func readLine() string {
 	reader := bufio.NewReader(os.Stdin)
 	line, _ := reader.ReadString('\n')
 	return strings.TrimSpace(line)
+}
+
+func (r *Runner) runStealth(ship ships.Ship, password string, opts Options) (int, error) {
+	localPort := opts.ProxyPort
+	if localPort <= 0 {
+		localPort = 1080
+	}
+	localAddr := fmt.Sprintf("127.0.0.1:%d", localPort)
+
+	target := sshx.Target{
+		Host:     ship.Host,
+		Port:     ship.SSHPort,
+		User:     ship.SSHUser,
+		Password: password,
+	}
+
+	fmt.Printf("\n[beammeup] stealth mode\n")
+	fmt.Printf("  VPS: %s@%s:%d\n", ship.SSHUser, ship.Host, ship.SSHPort)
+	fmt.Printf("  Local proxy: socks5://%s\n", localAddr)
+	fmt.Printf("  VPS footprint: none (SSH tunnel only)\n\n")
+	fmt.Printf("Quick test:\n")
+	fmt.Printf("  curl -x socks5h://%s https://api.ipify.org\n\n", localAddr)
+	fmt.Printf("Press Ctrl+C to stop.\n\n")
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+
+	logf := func(format string, args ...any) {
+		fmt.Fprintf(os.Stderr, "[stealth] "+format+"\n", args...)
+	}
+
+	if err := tunnel.Run(ctx, target, r.Hangar.SSH, localAddr, logf); err != nil {
+		return ExitFailure, err
+	}
+	fmt.Println("\n[beammeup] stealth tunnel closed.")
+	return ExitSuccess, nil
 }
 
 func isHTTPSquidConflict(err error) bool {
