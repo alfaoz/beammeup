@@ -1,6 +1,6 @@
 package remote
 
-// Script is uploaded and executed on the target VPS.
+// Script is uploaded and executed on the target server.
 const Script = `#!/usr/bin/env bash
 set -euo pipefail
 

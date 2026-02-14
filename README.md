@@ -1,6 +1,6 @@
 # beammeup
 
-beammeup is a local CLI cockpit that SSHes into your VPS and sets up a browser-usable proxy exit.
+beammeup is a local CLI cockpit that SSHes into your server and sets up a browser-usable proxy exit.
 
 live: [beammeup.pw](https://beammeup.pw)
 
@@ -8,7 +8,7 @@ live: [beammeup.pw](https://beammeup.pw)
 
 beammeup is install-only. there is no hosted control plane.
 
-you run beammeup on your own machine, and it configures services on your VPS over SSH.
+you run beammeup on your own machine, and it configures services on your server over SSH.
 
 ## core concepts
 
@@ -153,7 +153,7 @@ or auto-update before run:
 beammeup --auto-update
 ```
 
-## supported target VPS
+## supported target servers
 
 currently focused on Debian/Ubuntu with:
 

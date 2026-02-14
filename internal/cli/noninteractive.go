@@ -29,13 +29,13 @@ type Runner struct {
 }
 
 func PrintHelp() {
-	fmt.Print(`beammeup: manage HTTP/SOCKS5 proxy setups on a VPS via SSH.
+	fmt.Print(`beammeup: manage HTTP/SOCKS5 proxy setups on a server via SSH.
 
 Usage:
   beammeup [options]
 
 Options:
-  --host <ip-or-hostname>       VPS host or IP
+  --host <ip-or-hostname>       Server host or IP
   --ship <name>                 Use saved ship profile from ~/.beammeup/ships
   --list-ships                  List saved ship profiles and exit
   --ssh-port <port>             SSH port (default: 22)
@@ -50,9 +50,9 @@ Options:
   --action <show|configure|rotate|destroy>
   --show-inventory              List detected beammeup setups and exit
   --preflight-only              Run checks only, make no remote changes
-  --stealth                     Stealth mode: local SOCKS5 via SSH tunnel, zero VPS footprint
-  --no-firewall-change          Do not add firewall rules on the VPS
-  --listen-local                Bind proxy to localhost on the VPS (requires SSH tunnel)
+  --stealth                     Stealth mode: local SOCKS5 via SSH tunnel, zero remote footprint
+  --no-firewall-change          Do not add firewall rules on the server
+  --listen-local                Bind proxy to localhost on the server (requires SSH tunnel)
   --smart-blinder               Smart blinder (default: true). Disable with --smart-blinder=false
   --smart-blinder-idle-minutes  Smart blinder idle minutes (default: 10)
   --self-update                 Update local beammeup binary and exit
@@ -452,9 +452,9 @@ func (r *Runner) runStealth(ship ships.Ship, password string, opts Options) (int
 	}
 
 	fmt.Printf("\n[beammeup] stealth mode\n")
-	fmt.Printf("  VPS: %s@%s:%d\n", ship.SSHUser, ship.Host, ship.SSHPort)
+	fmt.Printf("  Server: %s@%s:%d\n", ship.SSHUser, ship.Host, ship.SSHPort)
 	fmt.Printf("  Local proxy: socks5://%s\n", localAddr)
-	fmt.Printf("  VPS footprint: none (SSH tunnel only)\n\n")
+	fmt.Printf("  Remote footprint: none (SSH tunnel only)\n\n")
 	fmt.Printf("Quick test:\n")
 	fmt.Printf("  curl -x socks5h://%s https://api.ipify.org\n\n", localAddr)
 	fmt.Printf("Press Ctrl+C to stop.\n\n")

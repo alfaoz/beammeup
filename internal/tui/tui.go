@@ -430,7 +430,7 @@ func (a *App) launchStealth(ship ships.Ship) error {
 
 	fmt.Printf("\n[beammeup] stealth mode :: %s\n", ship.Name)
 	fmt.Printf("  Local proxy: socks5://%s\n", localAddr)
-	fmt.Printf("  VPS footprint: none (SSH tunnel only)\n\n")
+	fmt.Printf("  Remote footprint: none (SSH tunnel only)\n\n")
 	fmt.Printf("Quick test:\n")
 	fmt.Printf("  curl -x socks5h://%s https://api.ipify.org\n\n", localAddr)
 	fmt.Printf("Press Ctrl+C to return to cockpit.\n\n")
@@ -607,7 +607,7 @@ func (a *App) createShipForm(existing ships.Ship) (ships.Ship, error) {
 
 	group := huh.NewGroup(
 		huh.NewInput().Title("Ship name").Value(&name),
-		huh.NewInput().Title("Target VPS host/IP").Value(&host),
+		huh.NewInput().Title("Target server host/IP").Value(&host),
 		huh.NewInput().Title("SSH port").Value(&sshPort),
 		huh.NewInput().Title("SSH user").Value(&sshUser),
 		huh.NewSelect[string]().
