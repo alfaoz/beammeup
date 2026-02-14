@@ -101,8 +101,29 @@ func (a *App) Run() error {
 			if ship.Name == "" {
 				continue
 			}
-			if err := a.ensureHangarCreated(ship, true); err != nil {
-				a.note("hangar setup failed", err.Error())
+			launchChoice := ""
+			if err := huh.NewSelect[string]().
+				Title("how do you want to use this ship?").
+				Options(
+					huh.NewOption("Launch (Standard)", "standard"),
+					huh.NewOption("Launch (Stealth)", "stealth"),
+					huh.NewOption("Skip — configure later", "skip"),
+				).
+				Value(&launchChoice).
+				Run(); err != nil {
+				if !isUserCancelled(err) {
+					return err
+				}
+			}
+			switch launchChoice {
+			case "standard":
+				if err := a.ensureHangarCreated(ship, true); err != nil {
+					a.note("hangar setup failed", err.Error())
+				}
+			case "stealth":
+				if err := a.launchStealth(ship); err != nil {
+					a.note("stealth failed", err.Error())
+				}
 			}
 		case "abandon":
 			name, err := a.pickShip(shipNames)
