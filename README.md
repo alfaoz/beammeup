@@ -110,7 +110,7 @@ beammeup --list-ships
 
 ```bash
 beammeup \
-  --host 203.0.113.10 \
+  --host example.invalid \
   --ssh-user root \
   --protocol socks5 \
   --proxy-port 18080 \
@@ -121,7 +121,7 @@ beammeup \
 
 ```bash
 beammeup \
-  --host 203.0.113.10 \
+  --host example.invalid \
   --ssh-user root \
   --protocol http \
   --http-mode sidecar \

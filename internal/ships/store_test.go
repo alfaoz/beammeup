@@ -15,8 +15,8 @@ func TestStoreSaveLoadLegacyCompatibility(t *testing.T) {
 	}
 
 	saved, err := store.Save(Ship{
-		Name:                    "RPS VPS",
-		Host:                    "REDACTED_IP",
+		Name:                    "RPS Server",
+		Host:                    "example.invalid",
 		SSHPort:                 22,
 		SSHUser:                 "root",
 		Protocol:                "http",
@@ -30,17 +30,17 @@ func TestStoreSaveLoadLegacyCompatibility(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	if saved.Name != "rps-vps" {
+	if saved.Name != "rps-server" {
 		t.Fatalf("expected sanitized name, got %q", saved.Name)
 	}
 
-	content, err := os.ReadFile(filepath.Join(dir, "rps-vps.ship"))
+	content, err := os.ReadFile(filepath.Join(dir, "rps-server.ship"))
 	if err != nil {
 		t.Fatalf("ReadFile: %v", err)
 	}
 	got := string(content)
 	for _, key := range []string{
-		"HOST=REDACTED_IP",
+		"HOST=example.invalid",
 		"SSH_PORT=22",
 		"SSH_USER=root",
 		"PROTOCOL=http",
@@ -56,11 +56,11 @@ func TestStoreSaveLoadLegacyCompatibility(t *testing.T) {
 		}
 	}
 
-	loaded, err := store.Load("rps-vps")
+	loaded, err := store.Load("rps-server")
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if loaded.Host != "REDACTED_IP" || loaded.SSHUser != "root" || loaded.ProxyPort != 18181 {
+	if loaded.Host != "example.invalid" || loaded.SSHUser != "root" || loaded.ProxyPort != 18181 {
 		t.Fatalf("unexpected loaded ship: %+v", loaded)
 	}
 	if loaded.HTTPMode != "sidecar" {
@@ -87,7 +87,7 @@ func TestStoreLoadLegacyDefaults(t *testing.T) {
 		t.Fatalf("NewStore: %v", err)
 	}
 
-	legacy := "HOST=203.0.113.10\nSSH_USER=root\n"
+	legacy := "HOST=legacy.example.invalid\nSSH_USER=root\n"
 	if err := os.WriteFile(filepath.Join(dir, "legacy.ship"), []byte(legacy), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}

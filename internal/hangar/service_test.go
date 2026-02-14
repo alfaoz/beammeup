@@ -16,7 +16,7 @@ func TestInventoryMapping(t *testing.T) {
 			t.Fatalf("expected inventory mode, got %q", in.Mode)
 		}
 		return remote.KeyValues{
-			"BM_PUBLIC_IP":       "REDACTED_IP",
+			"BM_PUBLIC_IP":       "203.0.113.10",
 			"BM_SOCKS_EXISTS":    "1",
 			"BM_SOCKS_ACTIVE":    "1",
 			"BM_SOCKS_PORT":      "18080",
@@ -37,7 +37,7 @@ func TestInventoryMapping(t *testing.T) {
 		t.Fatalf("Inventory: %v", err)
 	}
 
-	if inv.PublicIP != "REDACTED_IP" {
+	if inv.PublicIP != "203.0.113.10" {
 		t.Fatalf("unexpected public IP: %q", inv.PublicIP)
 	}
 	if inv.HangarStatus != StatusDrift {
@@ -69,12 +69,12 @@ func TestExecuteMapping(t *testing.T) {
 		}, "raw", nil
 	}
 
-	res, err := svc.Execute(ships.Ship{Host: "REDACTED_IP", SSHUser: "root", SSHPort: 22}, "pw", ActionInput{Mode: "apply"})
+	res, err := svc.Execute(ships.Ship{Host: "example.invalid", SSHUser: "root", SSHPort: 22}, "pw", ActionInput{Mode: "apply"})
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
 
-	if res.Host != "REDACTED_IP" {
+	if res.Host != "example.invalid" {
 		t.Fatalf("expected fallback host, got %q", res.Host)
 	}
 	if res.Protocol != "HTTP" || res.Port != "18181" || res.User != "beamhttp" {

@@ -26,8 +26,12 @@ jobs:
           set -euo pipefail
           test -z "$(gofmt -l .)"
 
+      - name: No Public IPs (check)
+        run: |
+          set -euo pipefail
+          bash scripts/check-no-public-ips.sh
+
       - name: Go test
         run: |
           set -euo pipefail
           go test ./...
-
