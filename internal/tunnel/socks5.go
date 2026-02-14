@@ -10,16 +10,16 @@ import (
 )
 
 const (
-	socks5Version = 0x05
-	authNone      = 0x00
-	authNoAccept  = 0xFF
-	cmdConnect    = 0x01
-	atypIPv4      = 0x01
-	atypDomain    = 0x03
-	atypIPv6      = 0x04
-	repSuccess    = 0x00
-	repFailure    = 0x01
-	repNotAllowed = 0x02
+	socks5Version  = 0x05
+	authNone       = 0x00
+	authNoAccept   = 0xFF
+	cmdConnect     = 0x01
+	atypIPv4       = 0x01
+	atypDomain     = 0x03
+	atypIPv6       = 0x04
+	repSuccess     = 0x00
+	repFailure     = 0x01
+	repNotAllowed  = 0x02
 	repHostUnreach = 0x04
 )
 
